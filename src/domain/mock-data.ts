@@ -88,5 +88,5 @@ export const trendData = [
   { day: '11/21', kcal: 1874, protein: 159, carbs: 176, fat: 69, completeness: '完整' },
   { day: '11/22', kcal: 2140, protein: 144, carbs: 238, fat: 70, completeness: '部分记录' },
   { day: '11/23', kcal: 1788, protein: 151, carbs: 169, fat: 58, completeness: '完整' },
-  { day: '11/24', kcal: 1721, protein: 130, carbs: 182, fat: 53, completeness: '完整' },
+  { day: '11/24', kcal: 1729, protein: 130, carbs: 182, fat: 53, completeness: '完整' },
 ]

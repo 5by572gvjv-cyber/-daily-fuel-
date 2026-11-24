@@ -2,7 +2,7 @@ import { createContext, lazy, Suspense, useContext, useMemo, useState } from 're
 import {
   BarChart3, BookOpen, CalendarDays, ChevronDown, ChevronLeft, ChevronRight,
   CircleHelp, Cloud, Database, Edit3, ImagePlus, Library, LineChart as LineIcon,
-  Pencil, Plus, RotateCcw, Search, Settings, Sparkles, Trash2,
+  Laptop, Pencil, Plus, RotateCcw, Search, Settings, Smartphone, Sparkles, Trash2,
   Undo2, Utensils, X,
 } from 'lucide-react'
 import {
@@ -30,6 +30,12 @@ const formatDate = (iso: string) => new Intl.DateTimeFormat('zh-CN', { month: 'l
 const formatNumber = (value: number) => new Intl.NumberFormat('zh-CN').format(value)
 
 function App() {
+  const isPreviewFrame = new URLSearchParams(window.location.search).has('preview-frame')
+  if (import.meta.env.DEV && !isPreviewFrame) return <DevelopmentPreview />
+  return <DailyFuelApp />
+}
+
+function DailyFuelApp() {
   const [activePage, setActivePage] = useState<NavigationId>('today')
   const [theme, setTheme] = useState<ThemeMode>('system')
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -99,6 +105,24 @@ function App() {
       {isSettingsOpen && <SettingsModal theme={theme} setTheme={setTheme} onClose={() => setIsSettingsOpen(false)} />}
     </div></AssistantInputContext.Provider>
   )
+}
+
+function DevelopmentPreview() {
+  const [device, setDevice] = useState<'desktop' | 'iphone'>('desktop')
+  const previewSrc = `${window.location.pathname}?preview-frame=1`
+
+  return <div className="development-preview">
+    <header className="preview-toolbar">
+      <div><strong>Daily Fuel 开发预览</strong><span>仅本地开发环境显示</span></div>
+      <div className="preview-device-switcher" role="group" aria-label="预览设备">
+        <button className={device === 'desktop' ? 'selected' : ''} type="button" onClick={() => setDevice('desktop')}><Laptop size={16} />电脑</button>
+        <button className={device === 'iphone' ? 'selected' : ''} type="button" onClick={() => setDevice('iphone')}><Smartphone size={16} />iPhone 390 × 844</button>
+      </div>
+    </header>
+    <div className={`preview-stage ${device === 'iphone' ? 'preview-stage--iphone' : ''}`}>
+      <iframe key={device} className="preview-frame" title={device === 'iphone' ? 'Daily Fuel iPhone 390 × 844 预览' : 'Daily Fuel 桌面预览'} src={previewSrc} />
+    </div>
+  </div>
 }
 
 function TodayPage({ entry, summary, goal, onDate, onDayType, expandedMeals, setExpandedMeals, onRemove, onEdit, onQuick, onRecord }: { entry: DailyEntry; summary: Nutrients; goal: Nutrients; onDate: (date: string) => void; onDayType: () => void; expandedMeals: string[]; setExpandedMeals: (value: string[]) => void; onRemove: (id: string) => void; onEdit: (id: string) => void; onQuick: (item: MealItem) => void; onRecord: () => void }) {

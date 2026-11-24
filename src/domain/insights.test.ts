@@ -4,7 +4,7 @@ import { getCompleteness, getKnownAverage, getTrendPoints } from './insights'
 describe('分析数据口径', () => {
   it('缺失日不会参与平均值或被当作零', () => {
     const points = getTrendPoints(7)
-    expect(getKnownAverage(points, 'kcal')).toBe(1892)
+    expect(getKnownAverage(points, 'kcal')).toBe(1894)
     expect(getCompleteness(points)).toBe(86)
   })
 
