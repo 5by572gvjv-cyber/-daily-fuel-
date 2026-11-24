@@ -1,4 +1,4 @@
-import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart3, BookOpen, CalendarDays, ChevronDown, ChevronLeft, ChevronRight,
   CircleHelp, Cloud, Database, Edit3, ImagePlus, Library, LineChart as LineIcon,
@@ -11,7 +11,8 @@ import {
 } from './domain/mock-data'
 import { navigationItems, type NavigationId } from './config/navigation'
 import { createBackup, loadLocalData, parseBackup, restoreBackup, saveDailyRecord, saveFood, saveGoals, type LocalGoals } from './domain/storage'
-import { calculateMealItem, calculateRecipe, markEstimated } from './domain/nutrition'
+import { calculateMealItem, calculateRecipe } from './domain/nutrition'
+import { createRequestGuard, parseAssistantDraft, type AssistantDraft } from './domain/assistant'
 
 const InsightsPage = lazy(() => import('./components/InsightsPage'))
 
@@ -56,7 +57,8 @@ function DailyFuelApp() {
   const [expandedMeals, setExpandedMeals] = useState<string[]>(['breakfast', 'lunch', 'dinner', 'snack'])
   const [toast, setToast] = useState<Toast>(null)
   const [recordInput, setRecordInput] = useState('')
-  const [showEstimate, setShowEstimate] = useState(false)
+  const [assistantDraft, setAssistantDraft] = useState<AssistantDraft | null>(null)
+  const assistantRequestGuard = useRef(createRequestGuard())
   const [manualOpen, setManualOpen] = useState(false)
 
   useEffect(() => {
@@ -88,6 +90,23 @@ function DailyFuelApp() {
       return { ...entry, meals, completeness: '完整' }
     })
     setToast({ text: note, undo: () => removeItem(added.id, false) })
+  }
+
+  function createAssistantDraft() {
+    const draft = parseAssistantDraft(recordInput, foods)
+    setAssistantDraft(draft)
+    setManualOpen(false)
+  }
+
+  function confirmAssistantDraft() {
+    if (!assistantDraft || assistantDraft.intent !== 'add') return
+    if (!assistantRequestGuard.current.claim(assistantDraft.requestId)) { setToast({ text: '这条解析已处理，未重复写入。' }); return }
+    const timestamp = Date.now()
+    const prepared = assistantDraft.items.map((item, index) => ({ ...item, id: `${item.id}-${timestamp}-${index}` }))
+    updateCurrent((entry) => ({ ...entry, meals: prepared.reduce((meals, item) => addItemToMeals(meals, item, assistantDraft.mealType), entry.meals), completeness: '完整' }))
+    setToast({ text: `已确认 ${prepared.length} 项并保存到本机浏览器` })
+    setAssistantDraft(null)
+    setRecordInput('')
   }
 
   function removeItem(itemId: string, announce = true) {
@@ -145,7 +164,7 @@ function DailyFuelApp() {
       : demoState === 'empty' ? <StatePanel icon={<Utensils />} title="这一天还没有记录" detail="未记录不代表未吃。你可以使用下方记录入口补记。" action={() => { setDemoState('ready'); setActivePage('record') }} actionLabel="开始记录" />
         : activePage === 'today' ? <TodayPage entry={currentEntry} summary={summary} goal={goal} onDate={setSelectedDate} onDayType={toggleDayType} expandedMeals={expandedMeals} setExpandedMeals={setExpandedMeals} onRemove={removeItem} onEdit={editItem} onQuick={(item) => addItem(item, '加餐')} onRecord={() => setActivePage('record')} />
           : activePage === 'foods' ? <FoodsPage foods={foods} onAdd={(item) => addItem(item)} onSaveFood={addFood} />
-            : activePage === 'record' ? <RecordPage foods={foods} input={recordInput} setInput={setRecordInput} showEstimate={showEstimate} setShowEstimate={setShowEstimate} manualOpen={manualOpen} setManualOpen={setManualOpen} onAdd={addItem} />
+            : activePage === 'record' ? <RecordPage foods={foods} input={recordInput} setInput={setRecordInput} draft={assistantDraft} onParse={createAssistantDraft} onConfirmDraft={confirmAssistantDraft} onDismissDraft={() => setAssistantDraft(null)} manualOpen={manualOpen} setManualOpen={setManualOpen} onAdd={addItem} />
               : activePage === 'history' ? <HistoryPage entries={entries} selectedDate={selectedDate} onDate={(date) => { setSelectedDate(date); setActivePage('today') }} />
                 : <Suspense fallback={<StatePanel icon={<RotateCcw />} title="正在加载分析" detail="图表模块按需加载，不会读取外部数据。" />}><InsightsPage entries={entries} /></Suspense>
 
@@ -199,7 +218,10 @@ function FoodsPage({ foods, onAdd, onSaveFood }: { foods: MealItem[]; onAdd: (it
   return <div className="library-layout"><div><div className="toolbar"><label className="search-box"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索食物、品牌或别名" /></label><button className="secondary-button" type="button" onClick={() => setEditor(editor === 'recipe' ? null : 'recipe')}><Library size={17} />创建菜谱</button><button className="primary-button" type="button" onClick={() => setEditor(editor === 'food' ? null : 'food')}><Plus size={17} />新增食物</button></div>{editor === 'food' && <FoodEditor onClose={() => setEditor(null)} onSave={onSaveFood} />}{editor === 'recipe' && <RecipeEditor foods={foods} onClose={() => setEditor(null)} onSave={onSaveFood} />}<div className="category-tabs"><button className={category === 'all' ? 'selected' : ''} onClick={() => setCategory('all')}>本机食物库</button><button className={category === 'recipes' ? 'selected' : ''} onClick={() => setCategory('recipes')}>私人菜谱</button><button disabled>品牌食品</button><button disabled>常用套餐</button></div><div className="food-list">{list.map((food) => <article className="food-row card" key={food.id}><div className="food-glyph"><Utensils size={19} /></div><div><h3>{food.name}</h3><p>{food.amount} · {food.state} · {food.source}</p></div><div className="food-nutrition numeric">{food.kcal}<small> kcal</small><span>P {food.protein}g</span></div><button className="icon-plain" aria-label={`记录${food.name}`} onClick={() => onAdd(food)}><Plus size={19} /></button></article>)}</div></div><aside className="library-detail card"><p className="section-label">LOCAL FOOD</p><h2>{list[0]?.name ?? '未找到食物'}</h2>{list[0] && <><div className="detail-nutrients"><b className="numeric">{list[0].kcal}<small> kcal</small></b><span>蛋白质 {list[0].protein}g</span><span>碳水 {list[0].carbs}g</span><span>脂肪 {list[0].fat}g</span></div><p className="source-note">数据来源：{list[0].source}。食物库和记录均仅保存在本机浏览器。</p><button className="secondary-button"><Pencil size={16} />编辑食物</button></>}</aside></div>
 }
 
-function RecordPage({ foods, input, setInput, showEstimate, setShowEstimate, manualOpen, setManualOpen, onAdd }: { foods: MealItem[]; input: string; setInput: (value: string) => void; showEstimate: boolean; setShowEstimate: (value: boolean) => void; manualOpen: boolean; setManualOpen: (value: boolean) => void; onAdd: (item: MealItem, type?: MealType, note?: string) => void }) { return <div className="record-layout"><section className="record-hero card"><div className="record-heading"><div><p className="section-label">AI INPUT · PROTOTYPE</p><h2>用自然语言描述这一餐</h2><p>此输入仅展示确认流程，未调用 AI 或外部服务。</p></div><Sparkles className="brand-icon" size={26} /></div><textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="例如：午餐吃了 150g 鸡胸肉、半碗米饭和一杯美式" rows={4} /><div className="record-actions"><button className="secondary-button" onClick={() => setManualOpen(!manualOpen)}><Edit3 size={17} />手动记录</button><button className="secondary-button disabled" type="button"><ImagePlus size={17} />图片识别（尚未开放）</button><button className="primary-button" disabled={!input.trim()} onClick={() => setShowEstimate(true)}>查看模拟解析</button></div></section>{showEstimate && <section className="estimate-card card"><div><p className="section-label">ESTIMATE CONFIRMATION</p><h2>需要你确认的估算</h2><p>本地原型根据固定示例展示拆解结果，不是 AI 解析，也不会写入数据库。</p></div><div className="estimate-item"><b>鸡胸肉</b><span>150 g · 估算范围 220–280 kcal</span></div><div className="estimate-actions"><button className="secondary-button" onClick={() => setShowEstimate(false)}>取消</button><button className="primary-button" onClick={() => { onAdd(markEstimated(quickFoods[1], 220, 280), '午餐', '已确认估算范围并保存'); setShowEstimate(false); setInput('') }}>确认记录</button></div></section>}{manualOpen && <ManualForm foods={foods} onAdd={onAdd} /> }<section className="section-block"><div className="section-header"><div><p className="section-label">QUICK LOG</p><h2>常用</h2></div></div><QuickPanel onQuick={(item) => onAdd(item, '加餐')} /></section></div> }
+function RecordPage({ foods, input, setInput, draft, onParse, onConfirmDraft, onDismissDraft, manualOpen, setManualOpen, onAdd }: { foods: MealItem[]; input: string; setInput: (value: string) => void; draft: AssistantDraft | null; onParse: () => void; onConfirmDraft: () => void; onDismissDraft: () => void; manualOpen: boolean; setManualOpen: (value: boolean) => void; onAdd: (item: MealItem, type?: MealType, note?: string) => void }) {
+  const draftTotal = draft?.items.length ? calculateSummary([{ id: 'assistant-preview', type: draft.mealType, time: '现在', items: draft.items }]) : null
+  return <div className="record-layout"><section className="record-hero card"><div className="record-heading"><div><p className="section-label">本地饮食助手 · 规则解析</p><h2>用自然语言描述这一餐</h2><p>仅匹配本机已有食物与明确重量；不会调用 AI 或发送数据到外部服务。</p></div><Sparkles className="brand-icon" size={26} /></div><textarea value={input} onChange={(event) => { setInput(event.target.value); onDismissDraft() }} placeholder="例如：午餐 150g 鸡胸肉、150g 米饭" rows={4} /><div className="record-actions"><button className="secondary-button" onClick={() => setManualOpen(!manualOpen)}><Edit3 size={17} />手动记录</button><button className="secondary-button disabled" type="button"><ImagePlus size={17} />图片识别（尚未开放）</button><button className="primary-button" disabled={!input.trim()} onClick={onParse}>解析并确认</button></div></section>{draft?.intent === 'clarify' && <section className="estimate-card card"><div><p className="section-label">需要补充</p><h2>暂时不能安全记录</h2><p>{draft.clarification}</p></div><div className="estimate-actions"><button className="secondary-button" onClick={onDismissDraft}>返回修改</button><button className="primary-button" onClick={() => { onDismissDraft(); setManualOpen(true) }}>改用手动记录</button></div></section>}{draft?.intent === 'add' && draftTotal && <section className="estimate-card card"><div><p className="section-label">本地解析待确认</p><h2>{draft.mealType} · {draft.items.length} 项</h2><p>请核对食物、重量和营养值；确认后才会写入本机浏览器。</p></div>{draft.items.map((item) => <div className="estimate-item" key={item.id}><b>{item.name}</b><span>{item.amount} · {item.kcal} kcal · P {item.protein}g</span></div>)}<div className="estimate-item"><b>合计</b><span className="numeric">{draftTotal.kcal} kcal · P {draftTotal.protein}g · C {draftTotal.carbs}g · F {draftTotal.fat}g</span></div><div className="estimate-actions"><button className="secondary-button" onClick={onDismissDraft}>返回修改</button><button className="primary-button" onClick={onConfirmDraft}>确认并保存</button></div></section>}{manualOpen && <ManualForm foods={foods} onAdd={onAdd} /> }<section className="section-block"><div className="section-header"><div><p className="section-label">QUICK LOG</p><h2>常用</h2></div></div><QuickPanel onQuick={(item) => onAdd(item, '加餐')} /></section></div>
+}
 
 function HistoryPage({ entries, selectedDate, onDate }: { entries: DailyEntry[]; selectedDate: string; onDate: (date: string) => void }) {
   const [cursor, setCursor] = useState(() => new Date(`${selectedDate}T12:00:00`))
