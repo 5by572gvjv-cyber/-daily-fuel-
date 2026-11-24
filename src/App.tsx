@@ -1,25 +1,29 @@
-import { useMemo, useState } from 'react'
+import { createContext, lazy, Suspense, useContext, useMemo, useState } from 'react'
 import {
   BarChart3, BookOpen, CalendarDays, ChevronDown, ChevronLeft, ChevronRight,
   CircleHelp, Cloud, Database, Edit3, ImagePlus, Library, LineChart as LineIcon,
   Pencil, Plus, RotateCcw, Search, Settings, Sparkles, Trash2,
   Undo2, Utensils, X,
 } from 'lucide-react'
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import {
-  addItemToMeals, calculateSummary, demoEntries, goals, mealTemplates, quickFoods, removeItemFromMeals, trendData,
+  addItemToMeals, calculateSummary, demoEntries, goals, mealTemplates, quickFoods, removeItemFromMeals,
   type DailyEntry, type DayType, type Meal, type MealItem, type MealType, type Nutrients,
 } from './domain/mock-data'
 import { navigationItems, type NavigationId } from './config/navigation'
+import { getTrendPoints } from './domain/insights'
+
+const InsightsPage = lazy(() => import('./components/InsightsPage'))
 
 type ThemeMode = 'system' | 'light' | 'dark'
 type DemoState = 'ready' | 'loading' | 'error' | 'empty'
 type Toast = { text: string; undo?: () => void } | null
+type AssistantInput = { input: string; setInput: (value: string) => void }
+const AssistantInputContext = createContext<AssistantInput | null>(null)
 
 const pageMeta: Record<NavigationId, { title: string; eyebrow: string }> = {
-  today: { title: '今日', eyebrow: 'TODAY / 演示数据' }, foods: { title: '食物库', eyebrow: 'FOOD LIBRARY / 演示数据' },
-  record: { title: '记录', eyebrow: 'LOG / 本地交互模拟' }, history: { title: '历史', eyebrow: 'HISTORY / 演示数据' },
-  insights: { title: '分析', eyebrow: 'INSIGHTS / 演示数据' },
+  today: { title: '今日', eyebrow: '演示数据' }, foods: { title: '食物库', eyebrow: '演示数据' },
+  record: { title: '记录', eyebrow: '本地交互模拟' }, history: { title: '历史', eyebrow: '演示数据' },
+  insights: { title: '分析', eyebrow: '演示数据' },
 }
 
 const formatDate = (iso: string) => new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(`${iso}T12:00:00`))
@@ -37,7 +41,6 @@ function App() {
   const [recordInput, setRecordInput] = useState('')
   const [showEstimate, setShowEstimate] = useState(false)
   const [manualOpen, setManualOpen] = useState(false)
-  const [trendRange, setTrendRange] = useState('7日')
 
   const currentEntry = entries.find((entry) => entry.date === selectedDate) ?? { date: selectedDate, dayType: 'rest' as DayType, completeness: '未记录' as const, meals: [] }
   const summary = useMemo(() => calculateSummary(currentEntry.meals), [currentEntry.meals])
@@ -82,10 +85,10 @@ function App() {
           : activePage === 'foods' ? <FoodsPage onAdd={(item) => addItem(item)} />
             : activePage === 'record' ? <RecordPage input={recordInput} setInput={setRecordInput} showEstimate={showEstimate} setShowEstimate={setShowEstimate} manualOpen={manualOpen} setManualOpen={setManualOpen} onAdd={addItem} />
               : activePage === 'history' ? <HistoryPage entries={entries} selectedDate={selectedDate} onDate={(date) => { setSelectedDate(date); setActivePage('today') }} />
-                : <InsightsPage range={trendRange} setRange={setTrendRange} />
+                : <Suspense fallback={<StatePanel icon={<RotateCcw />} title="正在加载分析" detail="图表模块按需加载，不会读取外部数据。" />}><InsightsPage /></Suspense>
 
   return (
-    <div className="app-shell" data-theme={theme === 'system' ? undefined : theme}>
+    <AssistantInputContext.Provider value={{ input: recordInput, setInput: setRecordInput }}><div className="app-shell" data-theme={theme === 'system' ? undefined : theme}>
       <aside className="sidebar"><Brand /><Navigation active={activePage} onNavigate={setActivePage} /><button className="sidebar-setting" type="button" onClick={() => setIsSettingsOpen(true)}><Settings size={18} />设置</button></aside>
       <main className="main-content">
         <header className="topbar"><Brand compact /><div className="header-actions"><button className="demo-chip" type="button" onClick={() => setDemoState(demoState === 'ready' ? 'loading' : 'ready')}>演示数据</button><button className="icon-button" type="button" aria-label="打开设置" onClick={() => setIsSettingsOpen(true)}><Settings size={19} /></button></div></header>
@@ -94,7 +97,7 @@ function App() {
       <nav className="bottom-nav" aria-label="主导航"><Navigation active={activePage} onNavigate={setActivePage} /></nav>
       {toast && <div className="toast" role="status"><span>{toast.text}</span>{toast.undo && <button type="button" onClick={() => { toast.undo?.(); setToast(null) }}><Undo2 size={15} />撤销</button>}<button aria-label="关闭提示" type="button" onClick={() => setToast(null)}><X size={16} /></button></div>}
       {isSettingsOpen && <SettingsModal theme={theme} setTheme={setTheme} onClose={() => setIsSettingsOpen(false)} />}
-    </div>
+    </div></AssistantInputContext.Provider>
   )
 }
 
@@ -113,15 +116,30 @@ function FoodsPage({ onAdd }: { onAdd: (item: MealItem) => void }) { const [quer
 
 function RecordPage({ input, setInput, showEstimate, setShowEstimate, manualOpen, setManualOpen, onAdd }: { input: string; setInput: (value: string) => void; showEstimate: boolean; setShowEstimate: (value: boolean) => void; manualOpen: boolean; setManualOpen: (value: boolean) => void; onAdd: (item: MealItem, type?: MealType, note?: string) => void }) { return <div className="record-layout"><section className="record-hero card"><div className="record-heading"><div><p className="section-label">AI INPUT · PROTOTYPE</p><h2>用自然语言描述这一餐</h2><p>此输入仅展示确认流程，未调用 AI 或外部服务。</p></div><Sparkles className="brand-icon" size={26} /></div><textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="例如：午餐吃了 150g 鸡胸肉、半碗米饭和一杯美式" rows={4} /><div className="record-actions"><button className="secondary-button" onClick={() => setManualOpen(!manualOpen)}><Edit3 size={17} />手动记录</button><button className="secondary-button disabled" type="button"><ImagePlus size={17} />图片识别（尚未开放）</button><button className="primary-button" disabled={!input.trim()} onClick={() => setShowEstimate(true)}>查看模拟解析</button></div></section>{showEstimate && <section className="estimate-card card"><div><p className="section-label">ESTIMATE CONFIRMATION</p><h2>需要你确认的估算</h2><p>本地原型根据固定示例展示拆解结果，不是 AI 解析，也不会写入数据库。</p></div><div className="estimate-item"><b>鸡胸肉</b><span>150 g · 熟重 · 约 248 kcal</span></div><div className="estimate-actions"><button className="secondary-button" onClick={() => setShowEstimate(false)}>取消</button><button className="primary-button" onClick={() => { onAdd(quickFoods[1], '午餐', '已确认估算并写入演示状态'); setShowEstimate(false); setInput('') }}>确认作为演示记录</button></div></section>}{manualOpen && <ManualForm onAdd={onAdd} /> }<section className="section-block"><div className="section-header"><div><p className="section-label">QUICK LOG</p><h2>快速记录</h2></div></div><QuickPanel onQuick={(item) => onAdd(item, '加餐')} /></section></div> }
 
-function HistoryPage({ entries, selectedDate, onDate }: { entries: DailyEntry[]; selectedDate: string; onDate: (date: string) => void }) { return <div className="history-layout"><section className="calendar-card card"><div className="section-header"><div><p className="section-label">NOVEMBER 2026</p><h2>日期概览</h2></div><CalendarDays size={20} /></div><div className="calendar-grid">{Array.from({ length: 14 }, (_, index) => { const date = `2026-11-${String(11 + index).padStart(2, '0')}`; const entry = entries.find((item) => item.date === date); return <button key={date} className={`${date === selectedDate ? 'selected ' : ''}${entry?.completeness === '完整' ? 'complete' : entry?.completeness === '部分记录' ? 'partial' : ''}`} type="button" onClick={() => onDate(date)}><span>{11 + index}</span><i /></button> })}</div><div className="calendar-legend"><span><i className="complete-dot" />完整</span><span><i className="partial-dot" />部分记录</span><span><i className="empty-dot" />未记录</span></div></section><section className="history-list"><div className="section-header"><div><p className="section-label">DAILY SUMMARY</p><h2>每日汇总</h2></div></div>{entries.slice(0, 7).map((entry) => { const total = calculateSummary(entry.meals); const fallback = trendData.find((point) => point.day === entry.date.slice(5).replace('-', '/')); return <button className="history-row card" key={entry.date} type="button" onClick={() => onDate(entry.date)}><div><b>{formatDate(entry.date)}</b><span>{entry.completeness}</span></div><strong className="numeric">{total.kcal || fallback?.kcal || '—'}<small> kcal</small></strong><ChevronRight size={18} /></button> })}</section></div> }
-
-function InsightsPage({ range, setRange }: { range: string; setRange: (range: string) => void }) { const visible = range === '7日' ? trendData : [...trendData, ...trendData.map((item, index) => ({ ...item, day: `10/${24 - index}` }))]; const averages = { kcal: 1926, protein: 144, carbs: 192, fat: 63 }; return <div className="insights-layout"><section className="insight-summary">{([{ label: '平均热量', value: `${averages.kcal}`, unit: 'kcal', color: 'blue' }, { label: '平均蛋白质', value: `${averages.protein}`, unit: 'g', color: 'protein' }, { label: '数据完整度', value: '71', unit: '%', color: 'green' }] as const).map((item) => <article className={`insight-stat card ${item.color}`} key={item.label}><span>{item.label}</span><b className="numeric">{item.value}<small>{item.unit}</small></b><p>{item.label === '数据完整度' ? '5 / 7 天可用于趋势分析' : '基于已记录的演示数据'}</p></article>)}</section><section className="chart-card card"><div className="section-header"><div><p className="section-label">NUTRITION TREND</p><h2>摄入趋势</h2></div><div className="range-tabs">{['7日', '14日', '30日'].map((item) => <button key={item} className={range === item ? 'selected' : ''} onClick={() => setRange(item)}>{item}</button>)}</div></div><div className="chart-legend"><span><i className="legend-kcal" />热量</span><span><i className="legend-protein" />蛋白质</span><span className="muted">缺失日不当作 0</span></div><div className="chart-wrap"><ResponsiveContainer width="100%" height={280}><LineChart data={visible}><CartesianGrid vertical={false} stroke="var(--chart-grid)" /><XAxis dataKey="day" tickLine={false} axisLine={false} /><YAxis hide /><Tooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border)', background: 'var(--card)' }} /><Line type="monotone" dataKey="kcal" stroke="#4779dc" strokeWidth={2.5} dot={false} connectNulls={false} /><Line type="monotone" dataKey="protein" stroke="#54a58d" strokeWidth={2.5} dot={false} connectNulls={false} /></LineChart></ResponsiveContainer></div></section></div> }
+function HistoryPage({ entries, selectedDate, onDate }: { entries: DailyEntry[]; selectedDate: string; onDate: (date: string) => void }) {
+  const [cursor, setCursor] = useState(new Date('2026-11-01T12:00:00'))
+  const year = cursor.getFullYear()
+  const month = cursor.getMonth()
+  const firstDay = new Date(year, month, 1).getDay()
+  const days = new Date(year, month + 1, 0).getDate()
+  const cells = Array.from({ length: Math.ceil((firstDay + days) / 7) * 7 }, (_, index) => index - firstDay + 1)
+  const monthLabel = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long' }).format(cursor)
+  const entryFor = (date: string) => entries.find((entry) => entry.date === date)
+  const trendByDate = new Map(getTrendPoints(7).map((point) => [point.date, point]))
+  const summaryRows = entries.filter((entry) => entry.date.startsWith(`${year}-${String(month + 1).padStart(2, '0')}`)).sort((a, b) => b.date.localeCompare(a.date))
+  return <div className="history-layout"><section className="calendar-card card"><div className="calendar-controls"><button className="icon-plain" aria-label="上个月" onClick={() => setCursor(new Date(year, month - 1, 1))}><ChevronLeft size={19} /></button><div><h2>{monthLabel}</h2><button className="text-button" onClick={() => setCursor(new Date('2026-11-01T12:00:00'))}>返回今天</button></div><button className="icon-plain" aria-label="下个月" onClick={() => setCursor(new Date(year, month + 1, 1))}><ChevronRight size={19} /></button></div><div className="weekday-row">{['日', '一', '二', '三', '四', '五', '六'].map((item) => <span key={item}>{item}</span>)}</div><div className="calendar-grid full-month">{cells.map((day, index) => { if (day < 1 || day > days) return <span key={`empty-${index}`} />; const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`; const entry = entryFor(date); return <button key={date} className={`${date === selectedDate ? 'selected ' : ''}${entry?.completeness === '完整' ? 'complete' : entry?.completeness === '部分记录' ? 'partial' : ''}`} type="button" aria-label={`${date} ${entry?.completeness ?? '未记录'}`} onClick={() => onDate(date)}><span>{day}</span><i /></button> })}</div><div className="calendar-legend"><span><i className="complete-dot" />已确认完整</span><span><i className="partial-dot" />部分记录</span><span><i className="empty-dot" />未记录</span></div></section><section className="history-list"><div className="section-header"><div><h2>每日汇总</h2><p className="muted">点击日期查看对应餐食</p></div></div>{summaryRows.length ? summaryRows.map((entry) => { const mealTotal = calculateSummary(entry.meals); const total = mealTotal.kcal ? mealTotal : trendByDate.get(entry.date) ?? mealTotal; return <button className="history-row card" key={entry.date} type="button" onClick={() => onDate(entry.date)}><div><b>{formatDate(entry.date)}</b><span>{entry.completeness}</span></div><strong className="numeric">{total.kcal ?? '—'}<small> kcal</small></strong><em className="history-macros numeric">P {total.protein ?? '—'} · C {total.carbs ?? '—'} · F {total.fat ?? '—'} g</em><ChevronRight size={18} /></button> }) : <StatePanel icon={<CalendarDays />} title="本月没有演示记录" detail="未记录不代表未吃。" />}</section></div>
+}
 
 function QuickPanel({ onQuick }: { onQuick: (item: MealItem) => void }) { return <section className="quick-panel"><div className="section-header"><div><p className="section-label">QUICK ADD</p><h2>常用</h2></div><button className="text-button">管理</button></div><div className="quick-list">{quickFoods.map((item) => <button className="quick-item card" type="button" key={item.id} onClick={() => onQuick(item)}><span className="food-glyph"><Plus size={16} /></span><span><b>{item.name}</b><small>{item.amount} · {item.kcal} kcal</small></span></button>)}</div><div className="template-list">{mealTemplates.map((item) => <button className="template-item" type="button" key={item.id}><Library size={17} /><span><b>{item.name}</b><small>{item.note}</small></span><strong className="numeric">{item.kcal}</strong></button>)}</div></section> }
 
 function MealCard({ meal, expanded, onToggle, onRemove, onEdit }: { meal: Meal; expanded: boolean; onToggle: () => void; onRemove: (id: string) => void; onEdit: (id: string) => void }) { const total = calculateSummary([meal]); return <article className="meal-card card"><button className="meal-title" type="button" onClick={onToggle}><div><span className="meal-dot" /><b>{meal.type}</b><small>{meal.time} · {meal.items.length} 项</small></div><div><strong className="numeric">{total.kcal}<small> kcal</small></strong><ChevronDown className={expanded ? 'rotated' : ''} size={18} /></div></button>{expanded && <div className="meal-items">{meal.items.map((item) => <div className="meal-item" key={item.id}><div><b>{item.name}</b><span>{item.amount} · {item.state} · {item.source}</span></div><div className="item-right"><strong className="numeric">{item.kcal}<small> kcal</small></strong><button aria-label={`修改${item.name}`} onClick={() => onEdit(item.id)}><Pencil size={15} /></button><button aria-label={`删除${item.name}`} onClick={() => onRemove(item.id)}><Trash2 size={15} /></button></div></div>)}</div>}</article> }
 
-function RecordComposer({ onRecord }: { onRecord: () => void }) { return <button className="record-composer" type="button" onClick={onRecord}><Sparkles size={18} /><span>描述你吃了什么…</span><ChevronRight size={17} /></button> }
+function RecordComposer({ onRecord }: { onRecord: () => void }) {
+  const assistant = useContext(AssistantInputContext)
+  if (!assistant) return null
+  const shortcuts = ['记录午餐', '补记昨晚', '复制早餐']
+  return <section className="assistant-card card"><div className="assistant-title"><div><p className="section-label">饮食助手 <span>模拟</span></p><h2>直接描述你吃了什么</h2></div><Sparkles size={21} /></div><textarea value={assistant.input} onChange={(event) => assistant.setInput(event.target.value)} rows={3} placeholder="例如：午餐吃了鸡胸肉、米饭和一杯美式" /><div className="assistant-footer"><div className="assistant-shortcuts">{shortcuts.map((item) => <button type="button" key={item} onClick={() => assistant.setInput(item)}>{item}</button>)}</div><button className="send-button" type="button" disabled={!assistant.input.trim()} onClick={onRecord}><Sparkles size={16} />发送</button></div><p className="assistant-note">可使用系统键盘听写 · 图片识别尚未开放 · 不调用真实 AI</p></section>
+}
 function FoodEditor({ onClose, onAdd }: { onClose: () => void; onAdd: (item: MealItem) => void }) { const [name, setName] = useState(''); return <form className="food-editor card" onSubmit={(event) => { event.preventDefault(); if (name) { onAdd({ id: `custom-${Date.now()}`, name, amount: '100 g', state: '熟重', source: '用户新增（演示）', kcal: 120, protein: 10, carbs: 8, fat: 5 }); onClose() } }}><div className="section-header"><h2>新增食物</h2><button className="icon-plain" type="button" onClick={onClose}><X size={18} /></button></div><label>食物名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：自制燕麦杯" /></label><div className="form-grid"><label>重量<input defaultValue="100" type="number" /></label><label>状态<select defaultValue="熟重"><option>熟重</option><option>生重</option></select></label><label>个人单位<select defaultValue="克"><option>克</option><option>毫升</option><option>份</option></select></label></div><button className="primary-button" type="submit">保存为演示食物</button></form> }
 function ManualForm({ onAdd }: { onAdd: (item: MealItem, type?: MealType, note?: string) => void }) { return <section className="manual-form card"><p className="section-label">MANUAL LOG</p><h2>手动记录</h2><div className="form-grid"><label>食物<input defaultValue="鸡胸肉" /></label><label>重量<input defaultValue="150" /></label><label>单位<select><option>g</option><option>ml</option><option>份</option></select></label></div><button className="primary-button" onClick={() => onAdd(quickFoods[1], '晚餐', '已通过手动表单加入演示数据')}>加入演示记录</button></section> }
 function StatePanel({ icon, title, detail, action, actionLabel }: { icon: React.ReactNode; title: string; detail: string; action?: () => void; actionLabel?: string }) { return <div className="state-panel card"><span>{icon}</span><h2>{title}</h2><p>{detail}</p>{action && <button className="primary-button" onClick={action}>{actionLabel}</button>}</div> }
