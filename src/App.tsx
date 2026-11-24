@@ -3,7 +3,7 @@ import {
   BarChart3, BookOpen, CalendarDays, ChevronDown, ChevronLeft, ChevronRight,
   CircleHelp, Cloud, Database, Edit3, ImagePlus, Library, LineChart as LineIcon,
   Laptop, Pencil, Plus, RotateCcw, Search, Settings, Smartphone, Sparkles, Trash2,
-  Undo2, Utensils, X,
+  Undo2, Utensils, WifiOff, X,
 } from 'lucide-react'
 import {
   addItemToMeals, calculateSummary, goals, mealTemplates, quickFoods, removeItemFromMeals,
@@ -60,6 +60,14 @@ function DailyFuelApp() {
   const [assistantDraft, setAssistantDraft] = useState<AssistantDraft | null>(null)
   const assistantRequestGuard = useRef(createRequestGuard())
   const [manualOpen, setManualOpen] = useState(false)
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine)
+
+  useEffect(() => {
+    const updateConnection = () => setIsOnline(navigator.onLine)
+    window.addEventListener('online', updateConnection)
+    window.addEventListener('offline', updateConnection)
+    return () => { window.removeEventListener('online', updateConnection); window.removeEventListener('offline', updateConnection) }
+  }, [])
 
   useEffect(() => {
     loadLocalData().then(({ entries: savedEntries, foods: savedFoods, goals: savedGoals }) => { setEntries(savedEntries); setFoods(savedFoods); setNutritionGoals(savedGoals); setIsStorageReady(true) }).catch(() => setToast({ text: '本地数据库无法打开，请检查浏览器存储权限。' }))
@@ -172,8 +180,8 @@ function DailyFuelApp() {
     <AssistantInputContext.Provider value={{ input: recordInput, setInput: setRecordInput }}><div className="app-shell" data-theme={theme === 'system' ? undefined : theme}>
       <aside className="sidebar"><Brand /><Navigation active={activePage} onNavigate={setActivePage} /><button className="sidebar-setting" type="button" onClick={() => setIsSettingsOpen(true)}><Settings size={18} />设置</button></aside>
       <main className="main-content">
-        <header className="topbar"><Brand compact /><div className="header-actions"><button className="demo-chip" type="button" onClick={() => setDemoState(demoState === 'ready' ? 'loading' : 'ready')}>界面状态</button><button className="icon-button" type="button" aria-label="打开设置" onClick={() => setIsSettingsOpen(true)}><Settings size={19} /></button></div></header>
-        <section className="page" aria-labelledby="page-title"><div className="page-heading"><div><p className="eyebrow">{pageMeta[activePage].eyebrow}</p><h1 id="page-title">{pageMeta[activePage].title}</h1></div><StateSwitcher state={demoState} setState={setDemoState} /></div>{content}</section>
+        <header className="topbar"><Brand compact /><div className="header-actions">{!isOnline && <span className="network-status" role="status"><WifiOff size={14} />离线</span>}<button className="demo-chip" type="button" onClick={() => setDemoState(demoState === 'ready' ? 'loading' : 'ready')}>界面状态</button><button className="icon-button" type="button" aria-label="打开设置" onClick={() => setIsSettingsOpen(true)}><Settings size={19} /></button></div></header>
+        <section className="page" aria-labelledby="page-title"><div className="page-heading"><div><p className="eyebrow">{pageMeta[activePage].eyebrow}</p><h1 id="page-title">{pageMeta[activePage].title}</h1></div><StateSwitcher state={demoState} setState={setDemoState} /></div>{!isOnline && <p className="offline-notice" role="status"><WifiOff size={15} />当前离线：记录仍会保存到这台设备。</p>}{content}</section>
       </main>
       <nav className="bottom-nav" aria-label="主导航"><Navigation active={activePage} onNavigate={setActivePage} /></nav>
       {toast && <div className="toast" role="status"><span>{toast.text}</span>{toast.undo && <button type="button" onClick={() => { toast.undo?.(); setToast(null) }}><Undo2 size={15} />撤销</button>}<button aria-label="关闭提示" type="button" onClick={() => setToast(null)}><X size={16} /></button></div>}
