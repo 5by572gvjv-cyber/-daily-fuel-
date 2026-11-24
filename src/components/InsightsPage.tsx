@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react'
 import { CartesianGrid, Dot, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { getCompleteness, getKnownAverage, getTrendPoints, metricMeta, type InsightMetric, type TrendPoint } from '../domain/insights'
+import type { DailyEntry } from '../domain/mock-data'
 
 const ranges = [7, 14, 30] as const
 const metrics = Object.keys(metricMeta) as InsightMetric[]
 
-export default function InsightsPage() {
+export default function InsightsPage({ entries }: { entries: DailyEntry[] }) {
   const [range, setRange] = useState<(typeof ranges)[number]>(7)
   const [metric, setMetric] = useState<InsightMetric>('kcal')
   const [selected, setSelected] = useState<TrendPoint | null>(null)
-  const points = useMemo(() => getTrendPoints(range), [range])
+  const points = useMemo(() => getTrendPoints(entries, range), [entries, range])
   const meta = metricMeta[metric]
   const average = getKnownAverage(points, metric)
   const completeness = getCompleteness(points)

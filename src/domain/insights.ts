@@ -1,4 +1,4 @@
-import { goals, trendData, type Nutrients } from './mock-data'
+import { calculateSummary, goals, type DailyEntry, type Nutrients } from './mock-data'
 
 export type InsightMetric = keyof Nutrients
 export type TrendPoint = { day: string; date: string; kcal: number | null; protein: number | null; carbs: number | null; fat: number | null; completeness: string }
@@ -10,20 +10,22 @@ export const metricMeta: Record<InsightMetric, { label: string; unit: 'kcal' | '
   fat: { label: '脂肪', unit: 'g', color: '#54a58d', goal: goals.training.fat },
 }
 
-const makeDate = (day: number) => `2026-11-${String(day).padStart(2, '0')}`
+function toLocalDate(date: Date): string {
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10)
+}
 
-const extendedTrend: TrendPoint[] = Array.from({ length: 30 }, (_, index) => {
-  const day = 24 - (29 - index)
-  const date = day > 0 ? makeDate(day) : `2026-10-${String(31 + day).padStart(2, '0')}`
-  const matching = trendData.find((point) => point.day === date.slice(5).replace('-', '/'))
-  if (matching) return { ...matching, date }
-  const isMissing = index % 7 === 1 || index % 11 === 0
-  const offset = (index % 5) * 22
-  return { date, day: date.slice(5).replace('-', '/'), kcal: isMissing ? null : 1840 + offset, protein: isMissing ? null : 138 + (index % 4) * 5, carbs: isMissing ? null : 175 + (index % 6) * 9, fat: isMissing ? null : 59 + (index % 4) * 3, completeness: isMissing ? '未记录' : index % 4 === 0 ? '部分记录' : '完整' }
-})
-
-export function getTrendPoints(range: 7 | 14 | 30): TrendPoint[] {
-  return extendedTrend.slice(-range)
+export function getTrendPoints(entries: DailyEntry[], range: 7 | 14 | 30, endDate = toLocalDate(new Date())): TrendPoint[] {
+  const byDate = new Map(entries.map((entry) => [entry.date, entry]))
+  const end = new Date(`${endDate}T12:00:00`)
+  return Array.from({ length: range }, (_, index) => {
+    const date = new Date(end)
+    date.setDate(end.getDate() - (range - index - 1))
+    const localDate = toLocalDate(date)
+    const entry = byDate.get(localDate)
+    const nutrients = entry && entry.meals.length ? calculateSummary(entry.meals) : null
+    return { date: localDate, day: localDate.slice(5).replace('-', '/'), kcal: nutrients?.kcal ?? null, protein: nutrients?.protein ?? null, carbs: nutrients?.carbs ?? null, fat: nutrients?.fat ?? null, completeness: entry?.completeness ?? '未记录' }
+  })
 }
 
 export function getKnownAverage(points: TrendPoint[], metric: InsightMetric): number | null {
