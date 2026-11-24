@@ -19,6 +19,12 @@ describe('重量与单位计算', () => {
   it('菜谱按成品重量和实际食用量计算', () => {
     const item = calculateRecipe('鸡肉饭', [{ food: quickFoods[1], quantity: 150, unit: 'g' }, { food: quickFoods[2], quantity: 150, unit: 'g' }], 300, 150)
     expect(item).toMatchObject({ kcal: 211, protein: 25, carbs: 19 })
+    expect(item).toMatchObject({ state: '熟重', source: '私人菜谱：成品 300 g', amount: '150 g' })
+  })
+
+  it('拒绝空菜谱和无效的成品重量，避免产生误导性快照', () => {
+    expect(() => calculateRecipe('空菜谱', [], 300, 150)).toThrow('至少需要一种原料')
+    expect(() => calculateRecipe('鸡肉饭', [{ food: quickFoods[1], quantity: 150, unit: 'g' }], 0, 150)).toThrow('必须大于 0')
   })
 
   it('估算保留范围而非伪装成精确值', () => {
