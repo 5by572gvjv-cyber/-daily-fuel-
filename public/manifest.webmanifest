@@ -1,17 +1,17 @@
 {
-  "id": "/",
+  "id": "./",
   "name": "Daily Fuel — 私人饮食工作台",
   "short_name": "Daily Fuel",
   "description": "本地优先的私人饮食记录工作台。",
   "lang": "zh-CN",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#F4F5F7",
   "theme_color": "#4779DC",
   "categories": ["health", "lifestyle", "productivity"],
   "icons": [
-    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
 }
