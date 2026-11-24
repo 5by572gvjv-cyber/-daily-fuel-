@@ -34,6 +34,11 @@ const shiftDate = (iso: string, offset: number) => { const date = new Date(`${is
 
 function App() {
   const isPreviewFrame = new URLSearchParams(window.location.search).has('preview-frame')
+  useEffect(() => {
+    if (!isPreviewFrame) return
+    document.documentElement.dataset.previewFrame = 'true'
+    return () => { delete document.documentElement.dataset.previewFrame }
+  }, [isPreviewFrame])
   if (import.meta.env.DEV && !isPreviewFrame) return <DevelopmentPreview />
   return <DailyFuelApp />
 }
