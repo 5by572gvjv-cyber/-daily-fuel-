@@ -2,6 +2,7 @@ export type DayType = 'training' | 'rest'
 export type MealType = '早餐' | '午餐' | '晚餐' | '加餐'
 
 export type Nutrients = { kcal: number; protein: number; carbs: number; fat: number }
+export type FoodUnit = 'g' | 'ml' | '份'
 export type MealItem = Nutrients & {
   id: string
   name: string
@@ -9,6 +10,10 @@ export type MealItem = Nutrients & {
   state: '熟重' | '生重' | '估算'
   source: string
   favorite?: boolean
+  basisAmount?: number
+  basisUnit?: 'g' | 'ml'
+  servingGrams?: number
+  densityGPerMl?: number
 }
 export type Meal = { id: string; type: MealType; time: string; items: MealItem[] }
 export type DailyEntry = { date: string; dayType: DayType; completeness: '完整' | '部分记录' | '未记录'; meals: Meal[] }
@@ -19,9 +24,9 @@ export const goals: Record<DayType, Nutrients> = {
 }
 
 export const quickFoods: MealItem[] = [
-  { id: 'food-yogurt', name: '希腊酸奶', amount: '200 g', state: '熟重', source: '包装标签', kcal: 146, protein: 20, carbs: 9, fat: 3 },
-  { id: 'food-chicken', name: '鸡胸肉', amount: '150 g', state: '熟重', source: 'USDA 基础数据', kcal: 248, protein: 46, carbs: 0, fat: 5 },
-  { id: 'food-rice', name: '米饭', amount: '150 g', state: '熟重', source: '中国食物成分表（演示）', kcal: 174, protein: 4, carbs: 38, fat: 0 },
+  { id: 'food-yogurt', name: '希腊酸奶', amount: '200 g', state: '熟重', source: '包装标签', kcal: 146, protein: 20, carbs: 9, fat: 3, basisAmount: 200, basisUnit: 'g', servingGrams: 200 },
+  { id: 'food-chicken', name: '鸡胸肉', amount: '150 g', state: '熟重', source: 'USDA 基础数据', kcal: 248, protein: 46, carbs: 0, fat: 5, basisAmount: 150, basisUnit: 'g', servingGrams: 150 },
+  { id: 'food-rice', name: '米饭', amount: '150 g', state: '熟重', source: '中国食物成分表（演示）', kcal: 174, protein: 4, carbs: 38, fat: 0, basisAmount: 150, basisUnit: 'g', servingGrams: 150 },
 ]
 
 export const mealTemplates = [
