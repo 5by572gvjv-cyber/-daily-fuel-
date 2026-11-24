@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { quickFoods } from './mock-data'
-import { calculateMealItem } from './nutrition'
+import { calculateMealItem, calculateRecipe, markEstimated } from './nutrition'
 
 describe('重量与单位计算', () => {
   it('按克数从基准营养值等比例计算', () => {
@@ -14,5 +14,14 @@ describe('重量与单位计算', () => {
   it('没有每份重量时拒绝按份换算', () => {
     const food = { ...quickFoods[1], servingGrams: undefined }
     expect(() => calculateMealItem(food, { quantity: 1, unit: '份' })).toThrow('每份重量')
+  })
+
+  it('菜谱按成品重量和实际食用量计算', () => {
+    const item = calculateRecipe('鸡肉饭', [{ food: quickFoods[1], quantity: 150, unit: 'g' }, { food: quickFoods[2], quantity: 150, unit: 'g' }], 300, 150)
+    expect(item).toMatchObject({ kcal: 211, protein: 25, carbs: 19 })
+  })
+
+  it('估算保留范围而非伪装成精确值', () => {
+    expect(markEstimated(quickFoods[1], 220, 280)).toMatchObject({ kcal: 250, estimateRange: { minKcal: 220, maxKcal: 280 }, state: '估算' })
   })
 })

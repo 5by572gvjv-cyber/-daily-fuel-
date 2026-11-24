@@ -14,6 +14,7 @@ export type MealItem = Nutrients & {
   basisUnit?: 'g' | 'ml'
   servingGrams?: number
   densityGPerMl?: number
+  estimateRange?: { minKcal: number; maxKcal: number }
 }
 export type Meal = { id: string; type: MealType; time: string; items: MealItem[] }
 export type DailyEntry = { date: string; dayType: DayType; completeness: '完整' | '部分记录' | '未记录'; meals: Meal[] }
