@@ -5,7 +5,7 @@
 - [x] 03 本地数据：IndexedDB schema、饮食记录与食物库 CRUD、基础有来源食物库、JSON 导出及校验后恢复；已测试刷新后保留与备份格式迁移校验。
 - [x] 04 计算：克、毫升、份的单位换算与边界校验，生熟重标记、训练/休息日目标本机保存、汇总及撤销同步；私人菜谱可按原料、成品和实际食用量计算并保存至本机食物库；估算记录保留范围与中心值。已测试未知密度、未知每份重量、菜谱边界值与估算范围。
 - [x] 05 AI：完成本地规则解析、已知食物与数量校验、确认后写入、重复请求防护及手动降级；未接入真实 AI 或服务端接口。
-- [x] 06 PWA 与 HTTPS 部署：manifest、PNG 主屏图标、service worker 离线壳、GitHub Pages 自动发布（https://5by572gvjv-cyber.github.io/-daily-fuel-/）。已修复 Actions 读不到 `github-pages` 产物的发布失败，并在 390 × 844 视口完成六页面、深浅主题、离线重开与安全区核验；主题选择已持久化（`localStorage`）。
+- [x] 06 PWA 与 HTTPS 部署：manifest、PNG 主屏图标、service worker 离线壳、GitHub Pages 自动发布（https://5by572gvjv-cyber.github.io/-daily-fuel-/）。已修复 Actions 读不到 `github-pages` 产物的发布失败，并在 390 × 844 视口完成六页面、深浅主题、离线重开与安全区核验；主题选择已持久化（`localStorage`）。真机反馈顶部贴边、底栏被 home indicator 压住后，已改为顶部按 `env(safe-area-inset-top)` + 20px 留白、底部 dock 悬浮胶囊（22px 圆角、离底 10px + 安全区）；iOS 浏览器内顶部取 max(safe+20, 96px)。
 - [ ] 06.1 iPhone 真机验收：Safari 打开、分享 → 添加到主屏幕、断网重开、导出/恢复备份（需在手机上手动确认）。
 - [ ] 07 真实使用一周：记录操作耗时、错误及摩擦点，修复后确认 P0。
 - [ ] 08 P1：云同步（先验证服务可达性）、图片识别、记忆管理、备餐、预演、周报，逐项验收。
