@@ -1,6 +1,6 @@
-const CACHE = 'daily-fuel-shell-v2'
+const CACHE = 'daily-fuel-shell-v3'
 const ROOT = new URL('./', self.registration.scope).pathname
-const APP_SHELL = [ROOT, `${ROOT}manifest.webmanifest`, `${ROOT}favicon.svg`]
+const APP_SHELL = [ROOT, `${ROOT}manifest.webmanifest`, `${ROOT}favicon.svg`, `${ROOT}icons/apple-touch-icon.png`]
 
 self.addEventListener('install', (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())))
 self.addEventListener('activate', (event) => event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith('daily-fuel-') && key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim())))
