@@ -12,6 +12,11 @@ export type MealItem = Nutrients & {
   /** 包装/连锁品牌名。有值时会计入食物库的「品牌食品」分类。 */
   brand?: string
   favorite?: boolean
+  /** 写入记录时的原始数量与单位，用于事后修改克重而不产生累计误差。 */
+  quantity?: number
+  unit?: FoodUnit
+  /** 每克营养值。记录保存后修改克重都以它为基准重算，避免多次缩放累计误差。 */
+  perGram?: Nutrients
   basisAmount?: number
   basisUnit?: 'g' | 'ml'
   servingGrams?: number
@@ -90,6 +95,22 @@ export function removeItemFromMeals(meals: Meal[], itemId: string): { meals: Mea
     return { ...meal, items: meal.items.filter((item) => item.id !== itemId) }
   }).filter((meal) => meal.items.length > 0)
   return { meals: nextMeals, removed, mealType }
+}
+
+/**
+ * 用同 id 的新条目替换原条目；换了餐次就从原餐次移除再并入目标餐次。
+ * 找不到原条目时原样返回，避免误写。
+ */
+export function replaceItemInMeals(meals: Meal[], next: MealItem, toMealType: MealType): Meal[] {
+  const source = meals.find((meal) => meal.items.some((item) => item.id === next.id))
+  if (!source) return meals
+  if (source.type === toMealType) {
+    return meals.map((meal) => meal.id === source.id ? { ...meal, items: meal.items.map((item) => item.id === next.id ? next : item) } : meal)
+  }
+  const without = meals
+    .map((meal) => ({ ...meal, items: meal.items.filter((item) => item.id !== next.id) }))
+    .filter((meal) => meal.items.length > 0)
+  return addItemToMeals(without, next, toMealType)
 }
 
 export const trendData = [

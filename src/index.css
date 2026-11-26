@@ -85,6 +85,14 @@ html:has(.app-shell[data-theme="light"]) { background:#f4f5f7; }
 .manager-panel { max-width:520px; }
 .manager-list { display:grid; gap:6px; max-height:52svh; overflow:auto; margin:12px 0; scrollbar-width:none; }
 .manager-list::-webkit-scrollbar { display:none; width:0; }
+
+/* 修改单条记录：数量、单位、餐次 */
+.item-editor .source-note { margin:10px 0 0; }
+.item-editor label { display:grid; gap:6px; color:var(--muted); font-size:.72rem; }
+.item-editor input,.item-editor select { width:100%; min-height:38px; padding:0 8px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--ink); font-size:.84rem; }
+.item-editor input:disabled,.item-editor select:disabled { opacity:.55; }
+.item-editor .estimate-item { margin:0 0 12px; }
+.item-editor .form-error { margin:8px 0 0; }
 .manager-row { display:flex; width:100%; align-items:center; gap:10px; padding:10px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--ink); text-align:left; }
 .manager-row:disabled { opacity:.45; }
 .manager-row.is-checked { border-color:color-mix(in srgb,var(--brand) 45%,var(--border)); background:var(--brand-soft); }

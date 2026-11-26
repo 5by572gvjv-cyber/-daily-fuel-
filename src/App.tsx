@@ -6,15 +6,15 @@ import {
   Undo2, Utensils, WifiOff, X,
 } from 'lucide-react'
 import {
-  addItemToMeals, calculateSummary, goals, removeItemFromMeals,
-  type DailyEntry, type DayType, type Meal, type MealCombo, type MealItem, type MealType, type Nutrients,
+  addItemToMeals, calculateSummary, goals, removeItemFromMeals, replaceItemInMeals,
+  type DailyEntry, type DayType, type FoodUnit, type Meal, type MealCombo, type MealItem, type MealType, type Nutrients,
 } from './domain/mock-data'
 import { navigationItems, type NavigationId } from './config/navigation'
 import {
   createBackup, loadLocalData, parseBackup, restoreBackup, saveCombos as persistCombos,
   saveDailyRecord, saveFood, saveGoals, saveQuickFoodIds, type LocalGoals,
 } from './domain/storage'
-import { calculateMealItem, calculateRecipe } from './domain/nutrition'
+import { calculateMealItem, calculateRecipe, readQuantity, rescaleItem } from './domain/nutrition'
 import { createRequestGuard, parseAssistantDraft, type AssistantDraft } from './domain/assistant'
 import { browserStorage, readTheme, saveTheme, type ThemeMode } from './domain/preferences'
 
@@ -66,6 +66,7 @@ function DailyFuelApp() {
   const [assistantDraft, setAssistantDraft] = useState<AssistantDraft | null>(null)
   const assistantRequestGuard = useRef(createRequestGuard())
   const [manualOpen, setManualOpen] = useState(false)
+  const [editingItem, setEditingItem] = useState<{ item: MealItem; mealType: MealType } | null>(null)
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
 
   useEffect(() => {
@@ -111,8 +112,14 @@ function DailyFuelApp() {
     updateCurrent((entry) => ({ ...entry, dayType: entry.dayType === 'training' ? 'rest' : 'training' }))
   }
 
-  function addItem(item: MealItem, mealType: MealType = '加餐', note = '已保存到本机浏览器') {
+  function expandMeal(mealType: MealType) {
+    const id = `meal-${mealType}`
+    setExpandedMeals((previous) => previous.includes(id) ? previous : [...previous, id])
+  }
+
+  function addItem(item: MealItem, mealType: MealType = '加餐', note = `已记到「${mealType}」，保存在本机`) {
     const added = { ...item, id: `${item.id}-${Date.now()}` }
+    expandMeal(mealType)
     updateCurrent((entry) => {
       const meals = addItemToMeals(entry.meals, added, mealType)
       return { ...entry, meals, completeness: '完整' }
@@ -133,6 +140,7 @@ function DailyFuelApp() {
   function addCombo(combo: MealCombo) {
     const stamp = Date.now()
     const items = combo.items.map((item, index) => ({ ...item, id: `${item.id}-${stamp}-${index}` }))
+    expandMeal(combo.mealType)
     updateCurrent((entry) => ({
       ...entry,
       meals: items.reduce((meals, item) => addItemToMeals(meals, item, combo.mealType), entry.meals),
@@ -152,6 +160,7 @@ function DailyFuelApp() {
     if (!assistantRequestGuard.current.claim(assistantDraft.requestId)) { setToast({ text: '这条解析已处理，未重复写入。' }); return }
     const timestamp = Date.now()
     const prepared = assistantDraft.items.map((item, index) => ({ ...item, id: `${item.id}-${timestamp}-${index}` }))
+    expandMeal(assistantDraft.mealType)
     updateCurrent((entry) => ({ ...entry, meals: prepared.reduce((meals, item) => addItemToMeals(meals, item, assistantDraft.mealType), entry.meals), completeness: '完整' }))
     setToast({ text: `已确认 ${prepared.length} 项并保存到本机浏览器` })
     setAssistantDraft(null)
@@ -164,9 +173,18 @@ function DailyFuelApp() {
     if (announce && result.removed && result.mealType) setToast({ text: '已从本机记录中删除', undo: () => addItem(result.removed!, result.mealType!, '已撤销删除并保存') })
   }
 
-  function editItem(itemId: string) {
-    updateCurrent((entry) => ({ ...entry, meals: entry.meals.map((meal) => ({ ...meal, items: meal.items.map((item) => item.id === itemId ? { ...item, amount: item.amount.includes('150') ? item.amount.replace('150', '200') : item.amount, kcal: Math.round(item.kcal * 1.12), protein: Math.round(item.protein * 1.12), carbs: Math.round(item.carbs * 1.12), fat: Math.round(item.fat * 1.12) } : item) })) }))
-    setToast({ text: '已修改份量并重新计算汇总' })
+  function openItemEditor(itemId: string) {
+    const meal = currentEntry.meals.find((candidate) => candidate.items.some((item) => item.id === itemId))
+    const item = meal?.items.find((candidate) => candidate.id === itemId)
+    if (!meal || !item) { setToast({ text: '这条记录已不存在，请刷新后再试。' }); return }
+    setEditingItem({ item, mealType: meal.type })
+  }
+
+  function saveItemEdit(next: MealItem, mealType: MealType) {
+    expandMeal(mealType)
+    updateCurrent((entry) => ({ ...entry, meals: replaceItemInMeals(entry.meals, next, mealType) }))
+    setEditingItem(null)
+    setToast({ text: `已更新为 ${next.amount}，汇总已重算` })
   }
 
   function addFood(food: MealItem) {
@@ -219,7 +237,7 @@ function DailyFuelApp() {
     : demoState === 'loading' ? <StatePanel icon={<RotateCcw />} title="正在加载界面状态" detail="不会读取或上传任何外部数据。" />
     : demoState === 'error' ? <StatePanel icon={<CircleHelp />} title="模拟加载失败" detail="真实产品会保留草稿并提供重试。本原型未连接服务。" action={() => setDemoState('ready')} actionLabel="重试" />
       : demoState === 'empty' ? <StatePanel icon={<Utensils />} title="这一天还没有记录" detail="未记录不代表未吃。你可以使用下方记录入口补记。" action={() => { setDemoState('ready'); setActivePage('record') }} actionLabel="开始记录" />
-        : activePage === 'today' ? <TodayPage entry={currentEntry} summary={summary} goal={goal} onDate={setSelectedDate} onDayType={toggleDayType} expandedMeals={expandedMeals} setExpandedMeals={setExpandedMeals} onRemove={removeItem} onEdit={editItem} onQuick={(item) => addItem(item, '加餐')} quickItems={quickItems} combos={combos} onCombo={addCombo} onManageQuick={() => setIsQuickManaging(true)} onRecord={() => setActivePage('record')} />
+        : activePage === 'today' ? <TodayPage entry={currentEntry} summary={summary} goal={goal} onDate={setSelectedDate} onDayType={toggleDayType} expandedMeals={expandedMeals} setExpandedMeals={setExpandedMeals} onRemove={removeItem} onEdit={openItemEditor} onQuick={(item) => addItem(item, '加餐')} quickItems={quickItems} combos={combos} onCombo={addCombo} onManageQuick={() => setIsQuickManaging(true)} onRecord={() => setActivePage('record')} />
           : activePage === 'foods' ? <FoodsPage foods={foods} onAdd={(item) => addItem(item)} onSaveFood={addFood} combos={combos} onCombosChange={updateCombos} onCombo={addCombo} />
             : activePage === 'record' ? <RecordPage foods={foods} input={recordInput} setInput={setRecordInput} draft={assistantDraft} onParse={createAssistantDraft} onConfirmDraft={confirmAssistantDraft} onDismissDraft={() => setAssistantDraft(null)} manualOpen={manualOpen} setManualOpen={setManualOpen} onAdd={addItem} quickItems={quickItems} combos={combos} onCombo={addCombo} onManageQuick={() => setIsQuickManaging(true)} />
               : activePage === 'history' ? <HistoryPage entries={entries} today={localDate()} />
@@ -236,6 +254,7 @@ function DailyFuelApp() {
       {toast && <div className="toast" role="status"><span>{toast.text}</span>{toast.undo && <button type="button" onClick={() => { toast.undo?.(); setToast(null) }}><Undo2 size={15} />撤销</button>}<button aria-label="关闭提示" type="button" onClick={() => setToast(null)}><X size={16} /></button></div>}
       {isSettingsOpen && <SettingsModal theme={theme} setTheme={changeTheme} goals={nutritionGoals} onGoalChange={updateGoal} onExport={exportData} onImport={importData} onClose={() => setIsSettingsOpen(false)} />}
       {isQuickManaging && <QuickManager foods={foods} selected={quickFoodIds} onSave={(ids) => { updateQuickIds(ids); setIsQuickManaging(false); setToast({ text: `常用已更新为 ${ids.length} 项` }) }} onClose={() => setIsQuickManaging(false)} />}
+      {editingItem && <ItemEditor item={editingItem.item} mealType={editingItem.mealType} onSave={saveItemEdit} onClose={() => setEditingItem(null)} />}
     </div></AssistantInputContext.Provider>
   )
 }
@@ -431,6 +450,39 @@ function ComboEditor({ foods, onClose, onSave }: { foods: MealItem[]; onClose: (
     try { onSave({ id: `combo-${crypto.randomUUID()}`, name: name.trim(), mealType, items: buildItems() }) } catch (reason) { setError(reason instanceof Error ? reason.message : '套餐无法保存。') }
   }
   return <section className="food-editor recipe-editor card"><div className="section-header"><div><p className="section-label">MEAL COMBO</p><h2>新建常用套餐</h2></div><button className="icon-plain" type="button" onClick={onClose}><X size={18} /></button></div><p className="source-note">按食物库当前营养值生成快照，记录后改动食物库不会影响已写入的记录。</p><label>套餐名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：工作日午餐" /></label><div className="form-grid"><label>记到哪一餐<select value={mealType} onChange={(event) => setMealType(event.target.value as MealType)}>{(['早餐', '午餐', '晚餐', '加餐'] as const).map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div>{rows.map((row, index) => <div className="form-grid" key={`${row.foodId}-${index}`}><label>食物<select value={row.foodId} onChange={(event) => setRows(rows.map((item, position) => position === index ? { ...item, foodId: event.target.value } : item))}>{foods.map((food) => <option key={food.id} value={food.id}>{food.name}</option>)}</select></label><label>重量 g<input value={row.grams} min="0" step="any" type="number" onChange={(event) => setRows(rows.map((item, position) => position === index ? { ...item, grams: event.target.value } : item))} /></label><label className="align-end"><button className="secondary-button" type="button" onClick={() => setRows(rows.filter((_, position) => position !== index))}>移除</button></label></div>)}<div className="record-actions"><button className="secondary-button" type="button" onClick={() => setRows([...rows, { foodId: foods[0]?.id ?? '', grams: '100' }])} disabled={!foods.length}><Plus size={16} />添加食物</button>{preview && <span className="combo-total numeric">合计 {preview.kcal} kcal · P {preview.protein} · C {preview.carbs} · F {preview.fat} g</span>}</div>{error && <p className="source-note form-error">{error}</p>}<button className="primary-button" type="button" onClick={save}>保存套餐</button></section>
+}
+
+function ItemEditor({ item, mealType, onSave, onClose }: { item: MealItem; mealType: MealType; onSave: (next: MealItem, mealType: MealType) => void; onClose: () => void }) {
+  const stored = readQuantity(item)
+  const [quantity, setQuantity] = useState(stored ? String(stored.quantity) : '')
+  const [unit, setUnit] = useState<FoodUnit>(stored?.unit ?? 'g')
+  const [type, setType] = useState<MealType>(mealType)
+  const [error, setError] = useState('')
+  const preview = useMemo(() => {
+    const value = Number(quantity)
+    if (!stored || quantity.trim() === '' || !Number.isFinite(value) || value <= 0) return null
+    try { return rescaleItem(item, value, unit) } catch { return null }
+  }, [item, quantity, unit, stored])
+  function submit() {
+    if (!stored) return setError('这条记录来自旧版本，缺少可换算的数量；可以删除后重新记录。')
+    const value = Number(quantity)
+    if (quantity.trim() === '' || !Number.isFinite(value) || value <= 0) return setError('数量必须大于 0。')
+    try { onSave(rescaleItem(item, value, unit), type); onClose() } catch (reason) { setError(reason instanceof Error ? reason.message : '无法重算这条记录。') }
+  }
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}><section className="settings-panel settings-full item-editor" role="dialog" aria-modal="true" aria-labelledby="item-edit-title" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="panel-heading"><div><p className="eyebrow">EDIT RECORD / LOCAL</p><h2 id="item-edit-title">修改这一条</h2></div><button className="icon-button" type="button" aria-label="关闭" onClick={onClose}><X size={19} /></button></div>
+    <p className="source-note">{item.name} · 原记录 {item.amount} · {item.kcal} kcal。修改只影响这一天的这一条，不会改动食物库。</p>
+    <form className="item-editor-form" onSubmit={(event) => { event.preventDefault(); submit() }}>
+      <div className="form-grid">
+        <label>数量<input value={quantity} disabled={!stored} inputMode="decimal" min="0" step="any" type="number" onChange={(event) => setQuantity(event.target.value)} /></label>
+        <label>单位<select value={unit} disabled={!stored} onChange={(event) => setUnit(event.target.value as FoodUnit)}><option value="g">g</option><option value="ml">ml</option><option value="份">份</option></select></label>
+        <label>记到哪一餐<select value={type} onChange={(event) => setType(event.target.value as MealType)}>{(['早餐', '午餐', '晚餐', '加餐'] as const).map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+      </div>
+      {preview ? <div className="estimate-item"><b>{preview.name}</b><span className="numeric">{preview.kcal} kcal · P {preview.protein}g · C {preview.carbs}g · F {preview.fat}g</span></div> : <p className="source-note">{stored ? '填写大于 0 的数量后会显示重算结果。' : '这条记录没有可换算的数量，只能修改餐次。'}</p>}
+      {error && <p className="source-note form-error">{error}</p>}
+      <div className="record-actions"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" type="submit">保存修改</button></div>
+    </form>
+  </section></div>
 }
 
 function QuickManager({ foods, selected, onSave, onClose }: { foods: MealItem[]; selected: string[]; onSave: (ids: string[]) => void; onClose: () => void }) {

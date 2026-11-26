@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { quickFoods } from './mock-data'
-import { calculateMealItem, calculateRecipe, markEstimated } from './nutrition'
+import { calculateMealItem, calculateRecipe, markEstimated, readQuantity, rescaleItem } from './nutrition'
 
 describe('重量与单位计算', () => {
   it('按克数从基准营养值等比例计算', () => {
@@ -29,5 +29,30 @@ describe('重量与单位计算', () => {
 
   it('估算保留范围而非伪装成精确值', () => {
     expect(markEstimated(quickFoods[1], 220, 280)).toMatchObject({ kcal: 250, estimateRange: { minKcal: 220, maxKcal: 280 }, state: '估算' })
+  })
+})
+
+describe('修改已记录条目的克重', () => {
+  const chicken = calculateMealItem(quickFoods[1], { quantity: 150, unit: 'g' })
+
+  it('按新的克数从每克营养值重算，而不是乘一个固定系数', () => {
+    expect(rescaleItem(chicken, 300, 'g')).toMatchObject({ kcal: 496, protein: 92, amount: '300 g', quantity: 300 })
+    expect(rescaleItem(chicken, 100, 'g')).toMatchObject({ kcal: 165.3, protein: 30.7, amount: '100 g' })
+  })
+
+  it('反复修改不会累计误差', () => {
+    expect(rescaleItem(rescaleItem(rescaleItem(chicken, 200, 'g'), 90, 'g'), 150, 'g')).toMatchObject({ kcal: 248, protein: 46 })
+  })
+
+  it('旧记录没存数量时从 amount 文本读回', () => {
+    const legacy = { ...quickFoods[2] }
+    expect(readQuantity(legacy)).toEqual({ quantity: 150, unit: 'g' })
+    expect(rescaleItem(legacy, 200, 'g')).toMatchObject({ kcal: 232 })
+  })
+
+  it('数量读不出来时拒绝重算，不猜测', () => {
+    const broken = { ...quickFoods[1], amount: '一小碗', quantity: undefined, unit: undefined }
+    expect(readQuantity(broken)).toBeNull()
+    expect(() => rescaleItem(broken, 200, 'g')).toThrow('缺少可换算的数量')
   })
 })
