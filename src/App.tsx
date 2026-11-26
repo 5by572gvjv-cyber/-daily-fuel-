@@ -13,10 +13,10 @@ import { navigationItems, type NavigationId } from './config/navigation'
 import { createBackup, loadLocalData, parseBackup, restoreBackup, saveDailyRecord, saveFood, saveGoals, type LocalGoals } from './domain/storage'
 import { calculateMealItem, calculateRecipe } from './domain/nutrition'
 import { createRequestGuard, parseAssistantDraft, type AssistantDraft } from './domain/assistant'
+import { browserStorage, readTheme, saveTheme, type ThemeMode } from './domain/preferences'
 
 const InsightsPage = lazy(() => import('./components/InsightsPage'))
 
-type ThemeMode = 'system' | 'light' | 'dark'
 type DemoState = 'ready' | 'loading' | 'error' | 'empty'
 type Toast = { text: string; undo?: () => void } | null
 type AssistantInput = { input: string; setInput: (value: string) => void }
@@ -46,7 +46,7 @@ function App() {
 
 function DailyFuelApp() {
   const [activePage, setActivePage] = useState<NavigationId>('today')
-  const [theme, setTheme] = useState<ThemeMode>('system')
+  const [theme, setTheme] = useState<ThemeMode>(() => readTheme(browserStorage()))
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [demoState, setDemoState] = useState<DemoState>('ready')
   const [entries, setEntries] = useState<DailyEntry[]>([])
@@ -133,6 +133,11 @@ function DailyFuelApp() {
     void saveFood(food).then(() => setToast({ text: '食物已保存到本机食物库' })).catch(() => setToast({ text: '食物保存失败。' }))
   }
 
+  function changeTheme(next: ThemeMode) {
+    setTheme(next)
+    saveTheme(browserStorage(), next)
+  }
+
   function updateGoal(dayType: DayType, key: keyof Nutrients, value: number) {
     if (!Number.isFinite(value) || value < 0) return
     setNutritionGoals((previous) => {
@@ -185,7 +190,7 @@ function DailyFuelApp() {
       </main>
       <nav className="bottom-nav" aria-label="主导航"><Navigation active={activePage} onNavigate={setActivePage} /></nav>
       {toast && <div className="toast" role="status"><span>{toast.text}</span>{toast.undo && <button type="button" onClick={() => { toast.undo?.(); setToast(null) }}><Undo2 size={15} />撤销</button>}<button aria-label="关闭提示" type="button" onClick={() => setToast(null)}><X size={16} /></button></div>}
-      {isSettingsOpen && <SettingsModal theme={theme} setTheme={setTheme} goals={nutritionGoals} onGoalChange={updateGoal} onExport={exportData} onImport={importData} onClose={() => setIsSettingsOpen(false)} />}
+      {isSettingsOpen && <SettingsModal theme={theme} setTheme={changeTheme} goals={nutritionGoals} onGoalChange={updateGoal} onExport={exportData} onImport={importData} onClose={() => setIsSettingsOpen(false)} />}
     </div></AssistantInputContext.Provider>
   )
 }
