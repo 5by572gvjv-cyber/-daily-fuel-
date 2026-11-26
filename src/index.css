@@ -73,3 +73,56 @@ html:has(.app-shell[data-theme="light"]) { background:#f4f5f7; }
 /* 分析页的时间范围按钮在 390 宽下会被裁掉「30日」，收紧内边距让三个按钮完整显示。 */
 .range-tabs { flex:0 0 auto; overflow:visible; }
 .range-tabs button { min-height:32px; padding:0 8px; font-size:.68rem; }
+
+/* 常用管理、套餐与历史当天详情 */
+.quick-empty { margin:6px 0 0; color:var(--muted); font-size:.72rem; line-height:1.55; }
+.toolbar--inline { align-items:center; gap:10px; margin-bottom:10px; }
+.toolbar--inline .source-note { flex:1; margin:0; }
+.combo-total { color:var(--muted); font-size:.7rem; }
+.form-error { color:var(--carbs); font-weight:600; }
+.align-end { align-self:end; }
+.form-grid .secondary-button { width:100%; }
+.manager-panel { max-width:520px; }
+.manager-list { display:grid; gap:6px; max-height:52svh; overflow:auto; margin:12px 0; scrollbar-width:none; }
+.manager-list::-webkit-scrollbar { display:none; width:0; }
+.manager-row { display:flex; width:100%; align-items:center; gap:10px; padding:10px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--ink); text-align:left; }
+.manager-row:disabled { opacity:.45; }
+.manager-row.is-checked { border-color:color-mix(in srgb,var(--brand) 45%,var(--border)); background:var(--brand-soft); }
+.manager-row > span:last-child { display:grid; min-width:0; gap:2px; }
+.manager-row b { font-size:.8rem; }
+.manager-row small { overflow:hidden; color:var(--muted); font-size:.65rem; text-overflow:ellipsis; white-space:nowrap; }
+.manager-check { display:grid; width:20px; height:20px; flex:0 0 auto; place-items:center; border:1px solid var(--border); border-radius:6px; color:var(--brand); font-size:.72rem; }
+.manager-row.is-checked .manager-check { border-color:var(--brand); background:var(--card); }
+.history-detail { display:grid; gap:10px; margin-bottom:14px; padding:15px; }
+.history-detail-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.history-detail-head h3 { margin:2px 0 0; font-size:1rem; letter-spacing:-.02em; }
+.history-badge { padding:3px 8px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:.63rem; }
+.history-badge.complete { border-color:color-mix(in srgb,var(--fat) 45%,var(--border)); color:var(--fat); }
+.history-badge.partial { border-color:color-mix(in srgb,var(--carbs) 45%,var(--border)); color:var(--carbs); }
+.history-detail-total { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px; }
+.history-detail-total strong { font-size:1.35rem; letter-spacing:-.04em; }
+.history-detail-total small { color:var(--faint); font-size:.62rem; }
+.history-detail-total em { color:var(--muted); font-size:.7rem; font-style:normal; }
+.history-detail-meals { display:grid; gap:9px; }
+.history-meal { display:grid; gap:5px; padding-top:9px; border-top:1px solid var(--border); }
+.history-meal-head { display:flex; justify-content:space-between; gap:8px; font-size:.75rem; }
+.history-meal-head span { color:var(--muted); font-size:.68rem; }
+.history-meal-item { display:flex; justify-content:space-between; gap:10px; color:var(--muted); font-size:.72rem; }
+.history-meal-item b { color:var(--ink); font-size:.72rem; }
+.detail-empty { margin:0; color:var(--muted); font-size:.76rem; line-height:1.55; }
+.history-row.selected { border-color:color-mix(in srgb,var(--brand) 45%,var(--border)); background:var(--brand-soft); }
+
+@media (max-width:560px) {
+  .toolbar--inline { flex-direction:column; align-items:stretch; }
+  .toolbar--inline .primary-button { justify-content:center; }
+  .history-detail { padding:13px; }
+}
+
+/* 套餐行右侧有两个图标按钮，营养值不能再换行，否则 390 宽下被挤成三行。 */
+.combo-row .food-nutrition { display:flex; flex-direction:column; align-items:flex-end; gap:1px; white-space:nowrap; }
+.combo-row .food-nutrition small { margin-left:2px; }
+.combo-row .icon-plain { flex:0 0 auto; }
+
+/* grid 的隐式列会被某一行的内容撑到超出容器；显式钳住列宽，行内再用 min-width:0 收缩。 */
+.food-list { grid-template-columns:minmax(0,1fr); }
+.food-list > * { min-width:0; }

@@ -1,7 +1,7 @@
 import Dexie, { type EntityTable } from 'dexie'
-import { goals, quickFoods, type DailyEntry, type DayType, type MealItem, type Nutrients } from './mock-data'
+import { goals, quickFoods, type DailyEntry, type DayType, type MealCombo, type MealItem, type Nutrients } from './mock-data'
 
-export const backupSchemaVersion = 2
+export const backupSchemaVersion = 3
 export type LocalGoals = Record<DayType, Nutrients>
 
 type MetaRecord = { key: string; value: string }
@@ -29,6 +29,10 @@ export type DailyFuelBackup = {
   dailyRecords: DailyEntry[]
   foods: MealItem[]
   goals: LocalGoals
+  /** 今日页「常用」里显示的食物 id，按顺序排列。 */
+  quickFoodIds: string[]
+  /** 用户自建的常用套餐。 */
+  combos: MealCombo[]
 }
 
 const starterFoods: MealItem[] = quickFoods.map((food) => ({ ...food }))
@@ -42,8 +46,17 @@ function isMealItem(value: unknown): value is MealItem {
   const item = value as Record<string, unknown>
   return typeof item.id === 'string' && typeof item.name === 'string' && typeof item.amount === 'string'
     && typeof item.source === 'string' && ['熟重', '生重', '估算'].includes(String(item.state))
+    && (item.brand === undefined || typeof item.brand === 'string')
     && isFiniteNonNegative(item.kcal) && isFiniteNonNegative(item.protein)
     && isFiniteNonNegative(item.carbs) && isFiniteNonNegative(item.fat)
+}
+
+function isMealCombo(value: unknown): value is MealCombo {
+  if (!value || typeof value !== 'object') return false
+  const combo = value as Record<string, unknown>
+  return typeof combo.id === 'string' && typeof combo.name === 'string'
+    && ['早餐', '午餐', '晚餐', '加餐'].includes(String(combo.mealType))
+    && Array.isArray(combo.items) && combo.items.length > 0 && combo.items.every(isMealItem)
 }
 
 function isDailyEntry(value: unknown): value is DailyEntry {
@@ -56,27 +69,62 @@ function isDailyEntry(value: unknown): value is DailyEntry {
     && entry.meals.every((meal) => meal && typeof meal === 'object' && Array.isArray((meal as { items?: unknown }).items) && (meal as { items: unknown[] }).items.every(isMealItem))
 }
 
+/** 初始常用：优先保留内置的三种食物，用户删掉后再退化为食物库前三个。 */
+export function defaultQuickFoodIds(foods: MealItem[]): string[] {
+  const starter = foods.filter((food) => quickFoods.some((item) => item.id === food.id)).map((food) => food.id)
+  return starter.length ? starter : foods.slice(0, 3).map((food) => food.id)
+}
+
 export function parseBackup(text: string): DailyFuelBackup {
   const raw: unknown = JSON.parse(text)
   if (!raw || typeof raw !== 'object') throw new Error('备份文件不是有效的 JSON 数据。')
   const backup = raw as Partial<DailyFuelBackup>
   const version = (raw as { schemaVersion?: unknown }).schemaVersion
-  if (version !== 1 && version !== backupSchemaVersion) throw new Error('此备份版本暂不支持恢复。')
+  // v1/v2 没有常用与套餐字段，按旧默认值补齐；v3 起完整保存。
+  if (version !== 1 && version !== 2 && version !== backupSchemaVersion) throw new Error('此备份版本暂不支持恢复。')
   if (!Array.isArray(backup.dailyRecords) || !backup.dailyRecords.every(isDailyEntry)) throw new Error('备份中的饮食记录格式不正确。')
   if (!Array.isArray(backup.foods) || !backup.foods.every(isMealItem)) throw new Error('备份中的食物库格式不正确。')
   const parsedGoals = backup.goals as LocalGoals | undefined
   const validGoals = parsedGoals && ['training', 'rest'].every((day) => ['kcal', 'protein', 'carbs', 'fat'].every((key) => isFiniteNonNegative(parsedGoals[day as DayType][key as keyof Nutrients])))
-  return { schemaVersion: backupSchemaVersion, exportedAt: String(backup.exportedAt ?? ''), dailyRecords: backup.dailyRecords, foods: backup.foods, goals: validGoals ? parsedGoals : structuredClone(goals) }
+  const parsedQuickIds = Array.isArray(backup.quickFoodIds) ? backup.quickFoodIds.filter((id): id is string => typeof id === 'string') : null
+  const parsedCombos = Array.isArray(backup.combos) ? backup.combos.filter(isMealCombo) : []
+  return {
+    schemaVersion: backupSchemaVersion,
+    exportedAt: String(backup.exportedAt ?? ''),
+    dailyRecords: backup.dailyRecords,
+    foods: backup.foods,
+    goals: validGoals ? parsedGoals : structuredClone(goals),
+    quickFoodIds: parsedQuickIds ?? defaultQuickFoodIds(backup.foods),
+    combos: parsedCombos,
+  }
+}
+
+async function readMeta<T>(key: string, fallback: T): Promise<T> {
+  const record = await db.meta.get(key)
+  if (!record) return fallback
+  try { return JSON.parse(record.value) as T } catch { return fallback }
 }
 
 export async function loadLocalData() {
   if (await db.foods.count() === 0) await db.foods.bulkPut(starterFoods)
-  const goalRecord = await db.meta.get('nutrition-goals')
-  const localGoals = goalRecord ? JSON.parse(goalRecord.value) as LocalGoals : structuredClone(goals)
-  return { entries: await db.dailyRecords.toArray(), foods: await db.foods.toArray(), goals: localGoals }
+  const foods = await db.foods.toArray()
+  const localGoals = await readMeta<LocalGoals>('nutrition-goals', structuredClone(goals))
+  const quickFoodIds = await readMeta<string[] | null>('quick-food-ids', null)
+  const combos = await readMeta<MealCombo[]>('meal-combos', [])
+  return {
+    entries: await db.dailyRecords.toArray(),
+    foods,
+    goals: localGoals,
+    quickFoodIds: quickFoodIds ?? defaultQuickFoodIds(foods),
+    combos: combos.filter(isMealCombo),
+  }
 }
 
 export async function saveGoals(localGoals: LocalGoals) { await db.meta.put({ key: 'nutrition-goals', value: JSON.stringify(localGoals) }) }
+
+export async function saveQuickFoodIds(ids: string[]) { await db.meta.put({ key: 'quick-food-ids', value: JSON.stringify(ids) }) }
+
+export async function saveCombos(combos: MealCombo[]) { await db.meta.put({ key: 'meal-combos', value: JSON.stringify(combos) }) }
 
 export async function saveDailyRecord(entry: DailyEntry) {
   await db.dailyRecords.put(entry)
@@ -87,12 +135,15 @@ export async function saveFood(food: MealItem) {
 }
 
 export async function createBackup(): Promise<DailyFuelBackup> {
+  const local = await loadLocalData()
   return {
     schemaVersion: backupSchemaVersion,
     exportedAt: new Date().toISOString(),
     dailyRecords: await db.dailyRecords.toArray(),
     foods: await db.foods.toArray(),
-    goals: (await loadLocalData()).goals,
+    goals: local.goals,
+    quickFoodIds: local.quickFoodIds,
+    combos: local.combos,
   }
 }
 
@@ -103,6 +154,8 @@ export async function restoreBackup(backup: DailyFuelBackup) {
     await db.dailyRecords.bulkPut(backup.dailyRecords)
     await db.foods.bulkPut(backup.foods)
     await saveGoals(backup.goals)
+    await saveQuickFoodIds(backup.quickFoodIds)
+    await saveCombos(backup.combos)
   })
-  return { entries: backup.dailyRecords, foods: backup.foods, goals: backup.goals }
+  return { entries: backup.dailyRecords, foods: backup.foods, goals: backup.goals, quickFoodIds: backup.quickFoodIds, combos: backup.combos }
 }

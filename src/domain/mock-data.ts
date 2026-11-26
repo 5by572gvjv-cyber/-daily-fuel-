@@ -9,6 +9,8 @@ export type MealItem = Nutrients & {
   amount: string
   state: '熟重' | '生重' | '估算'
   source: string
+  /** 包装/连锁品牌名。有值时会计入食物库的「品牌食品」分类。 */
+  brand?: string
   favorite?: boolean
   basisAmount?: number
   basisUnit?: 'g' | 'ml'
@@ -18,6 +20,9 @@ export type MealItem = Nutrients & {
 }
 export type Meal = { id: string; type: MealType; time: string; items: MealItem[] }
 export type DailyEntry = { date: string; dayType: DayType; completeness: '完整' | '部分记录' | '未记录'; meals: Meal[] }
+
+/** 常用套餐：把常吃的一组食物存成一套，一次写入当天记录。 */
+export type MealCombo = { id: string; name: string; mealType: MealType; items: MealItem[] }
 
 export const goals: Record<DayType, Nutrients> = {
   training: { kcal: 2200, protein: 155, carbs: 250, fat: 65 },
