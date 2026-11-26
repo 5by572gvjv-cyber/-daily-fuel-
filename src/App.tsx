@@ -73,6 +73,9 @@ function DailyFuelApp() {
     loadLocalData().then(({ entries: savedEntries, foods: savedFoods, goals: savedGoals }) => { setEntries(savedEntries); setFoods(savedFoods); setNutritionGoals(savedGoals); setIsStorageReady(true) }).catch(() => setToast({ text: '本地数据库无法打开，请检查浏览器存储权限。' }))
   }, [])
 
+  // 切页后回到顶部，避免沿用上一页的滚动位置。
+  useEffect(() => { window.scrollTo(0, 0) }, [activePage])
+
   const currentEntry = entries.find((entry) => entry.date === selectedDate) ?? { date: selectedDate, dayType: 'rest' as DayType, completeness: '未记录' as const, meals: [] }
   const summary = useMemo(() => calculateSummary(currentEntry.meals), [currentEntry.meals])
   const goal = nutritionGoals[currentEntry.dayType]
