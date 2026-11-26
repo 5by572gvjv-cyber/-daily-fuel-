@@ -3,6 +3,10 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 
+// iOS 上 navigator.standalone 只在 Safari/WebView 中存在：false 表示仍在浏览器里，Safari 的顶部工具栏会浮在页面上。
+const standaloneHint = (navigator as Navigator & { standalone?: boolean }).standalone
+if (standaloneHint === false) document.documentElement.dataset.iosBrowser = 'true'
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
