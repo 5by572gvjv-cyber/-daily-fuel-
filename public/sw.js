@@ -1,4 +1,4 @@
-const CACHE = 'daily-fuel-shell-v4'
+const CACHE = 'daily-fuel-shell-v5'
 const ROOT = new URL('./', self.registration.scope).pathname
 const APP_SHELL = [ROOT, `${ROOT}manifest.webmanifest`, `${ROOT}favicon.svg`, `${ROOT}icons/apple-touch-icon.png`]
 

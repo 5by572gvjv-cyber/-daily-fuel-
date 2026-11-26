@@ -1,7 +1,7 @@
-import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart3, BookOpen, CalendarDays, ChevronDown, ChevronLeft, ChevronRight,
-  CircleHelp, Cloud, Database, Edit3, ImagePlus, Library, LineChart as LineIcon,
+  Cloud, Database, Edit3, ImagePlus, Library, LineChart as LineIcon,
   Laptop, Package, Pencil, Plus, RotateCcw, Search, Settings, Smartphone, Sparkles, Trash2,
   Undo2, Utensils, WifiOff, X,
 } from 'lucide-react'
@@ -12,29 +12,27 @@ import {
 import { navigationItems, type NavigationId } from './config/navigation'
 import {
   createBackup, loadLocalData, parseBackup, restoreBackup, saveCombos as persistCombos,
-  saveDailyRecord, saveFood, saveGoals, saveQuickFoodIds, type LocalGoals,
+  saveBodyEntry, saveDailyRecord, saveFood, saveGoals, saveHeight, saveQuickFoodIds, type LocalGoals,
 } from './domain/storage'
+import { upsertBodyEntry, type BodyEntry } from './domain/body'
 import { calculateMealItem, calculateRecipe, readQuantity, rescaleItem } from './domain/nutrition'
 import { createRequestGuard, parseAssistantDraft, type AssistantDraft } from './domain/assistant'
 import { browserStorage, readTheme, saveTheme, type ThemeMode } from './domain/preferences'
 
 const InsightsPage = lazy(() => import('./components/InsightsPage'))
 
-type DemoState = 'ready' | 'loading' | 'error' | 'empty'
 type Toast = { text: string; undo?: () => void } | null
-type AssistantInput = { input: string; setInput: (value: string) => void }
-const AssistantInputContext = createContext<AssistantInput | null>(null)
 
 const pageMeta: Record<NavigationId, { title: string; eyebrow: string }> = {
   today: { title: '今日', eyebrow: '本机数据' }, foods: { title: '食物库', eyebrow: '本机数据' },
-  record: { title: '记录', eyebrow: '本机记录' }, history: { title: '历史', eyebrow: '本机数据' },
-  insights: { title: '分析', eyebrow: '本机数据' },
+  history: { title: '历史', eyebrow: '本机数据' }, insights: { title: '分析', eyebrow: '本机数据' },
 }
 
 const formatDate = (iso: string) => new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(`${iso}T12:00:00`))
 const formatNumber = (value: number) => new Intl.NumberFormat('zh-CN').format(value)
 const localDate = () => new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()).replaceAll('/', '-')
 const shiftDate = (iso: string, offset: number) => { const date = new Date(`${iso}T12:00:00`); date.setDate(date.getDate() + offset); return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date).replaceAll('/', '-') }
+const guessMealType = (): MealType => { const hour = new Date().getHours(); return hour < 10 ? '早餐' : hour < 15 ? '午餐' : hour < 21 ? '晚餐' : '加餐' }
 
 function App() {
   const isPreviewFrame = new URLSearchParams(window.location.search).has('preview-frame')
@@ -51,12 +49,13 @@ function DailyFuelApp() {
   const [activePage, setActivePage] = useState<NavigationId>('today')
   const [theme, setTheme] = useState<ThemeMode>(() => readTheme(browserStorage()))
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [demoState, setDemoState] = useState<DemoState>('ready')
   const [entries, setEntries] = useState<DailyEntry[]>([])
   const [foods, setFoods] = useState<MealItem[]>([])
   const [nutritionGoals, setNutritionGoals] = useState<LocalGoals>(() => structuredClone(goals))
   const [quickFoodIds, setQuickFoodIds] = useState<string[]>([])
   const [combos, setCombos] = useState<MealCombo[]>([])
+  const [bodyMetrics, setBodyMetrics] = useState<BodyEntry[]>([])
+  const [heightCm, setHeightCm] = useState<number | null>(null)
   const [isQuickManaging, setIsQuickManaging] = useState(false)
   const [isStorageReady, setIsStorageReady] = useState(false)
   const [selectedDate, setSelectedDate] = useState(localDate)
@@ -68,6 +67,13 @@ function DailyFuelApp() {
   const [manualOpen, setManualOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<{ item: MealItem; mealType: MealType } | null>(null)
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
+
+  // 提示条自动消失，避免一直盖住底部按钮；带「撤销」的多留几秒。
+  useEffect(() => {
+    if (!toast) return
+    const timer = window.setTimeout(() => setToast(null), toast.undo ? 6000 : 4000)
+    return () => window.clearTimeout(timer)
+  }, [toast])
 
   useEffect(() => {
     const updateConnection = () => setIsOnline(navigator.onLine)
@@ -83,6 +89,8 @@ function DailyFuelApp() {
       setNutritionGoals(saved.goals)
       setQuickFoodIds(saved.quickFoodIds)
       setCombos(saved.combos)
+      setBodyMetrics(saved.bodyMetrics)
+      setHeightCm(saved.heightCm)
       setIsStorageReady(true)
     }).catch(() => setToast({ text: '本地数据库无法打开，请检查浏览器存储权限。' }))
   }, [])
@@ -146,7 +154,7 @@ function DailyFuelApp() {
       meals: items.reduce((meals, item) => addItemToMeals(meals, item, combo.mealType), entry.meals),
       completeness: '完整',
     }))
-    setToast({ text: `已记录套餐「${combo.name}」${items.length} 项，可在记录页修改` })
+    setToast({ text: `已记录套餐「${combo.name}」${items.length} 项，可点铅笔修改` })
   }
 
   function createAssistantDraft() {
@@ -193,6 +201,19 @@ function DailyFuelApp() {
     void saveFood(food).then(() => setToast({ text: isEdit ? '食物已更新，历史记录不受影响' : '食物已保存到本机食物库' })).catch(() => setToast({ text: '食物保存失败。' }))
   }
 
+  function saveWeight(date: string, weightKg: number) {
+    const next = upsertBodyEntry(bodyMetrics, date, weightKg)
+    const saved = next.find((entry) => entry.date === date)
+    setBodyMetrics(next)
+    if (saved) void saveBodyEntry(saved).catch(() => setToast({ text: '体重保存失败。' }))
+    setToast({ text: `已记录 ${date.slice(5).replace('-', '/')} 体重 ${weightKg} kg` })
+  }
+
+  function updateHeight(value: number | null) {
+    setHeightCm(value)
+    void saveHeight(value).catch(() => setToast({ text: '身高保存失败。' }))
+  }
+
   function changeTheme(next: ThemeMode) {
     setTheme(next)
     saveTheme(browserStorage(), next)
@@ -227,6 +248,8 @@ function DailyFuelApp() {
       setNutritionGoals(data.goals)
       setQuickFoodIds(data.quickFoodIds)
       setCombos(data.combos)
+      setBodyMetrics(data.bodyMetrics)
+      setHeightCm(data.heightCm)
       setToast({ text: '备份已恢复到本机浏览器。' })
     } catch (error) {
       setToast({ text: error instanceof Error ? error.message : '备份恢复失败。' })
@@ -234,28 +257,24 @@ function DailyFuelApp() {
   }
 
   const content = !isStorageReady ? <StatePanel icon={<RotateCcw />} title="正在打开本地数据" detail="数据仅保存在这台设备的浏览器中。" />
-    : demoState === 'loading' ? <StatePanel icon={<RotateCcw />} title="正在加载界面状态" detail="不会读取或上传任何外部数据。" />
-    : demoState === 'error' ? <StatePanel icon={<CircleHelp />} title="模拟加载失败" detail="真实产品会保留草稿并提供重试。本原型未连接服务。" action={() => setDemoState('ready')} actionLabel="重试" />
-      : demoState === 'empty' ? <StatePanel icon={<Utensils />} title="这一天还没有记录" detail="未记录不代表未吃。你可以使用下方记录入口补记。" action={() => { setDemoState('ready'); setActivePage('record') }} actionLabel="开始记录" />
-        : activePage === 'today' ? <TodayPage entry={currentEntry} summary={summary} goal={goal} onDate={setSelectedDate} onDayType={toggleDayType} expandedMeals={expandedMeals} setExpandedMeals={setExpandedMeals} onRemove={removeItem} onEdit={openItemEditor} onQuick={(item) => addItem(item, '加餐')} quickItems={quickItems} combos={combos} onCombo={addCombo} onManageQuick={() => setIsQuickManaging(true)} onRecord={() => setActivePage('record')} />
-          : activePage === 'foods' ? <FoodsPage foods={foods} onAdd={(item) => addItem(item)} onSaveFood={addFood} combos={combos} onCombosChange={updateCombos} onCombo={addCombo} />
-            : activePage === 'record' ? <RecordPage foods={foods} input={recordInput} setInput={setRecordInput} draft={assistantDraft} onParse={createAssistantDraft} onConfirmDraft={confirmAssistantDraft} onDismissDraft={() => setAssistantDraft(null)} manualOpen={manualOpen} setManualOpen={setManualOpen} onAdd={addItem} quickItems={quickItems} combos={combos} onCombo={addCombo} onManageQuick={() => setIsQuickManaging(true)} />
-              : activePage === 'history' ? <HistoryPage entries={entries} today={localDate()} />
-                : <Suspense fallback={<StatePanel icon={<RotateCcw />} title="正在加载分析" detail="图表模块按需加载，不会读取外部数据。" />}><InsightsPage entries={entries} /></Suspense>
+    : activePage === 'today' ? <TodayPage entry={currentEntry} summary={summary} goal={goal} onDate={setSelectedDate} onDayType={toggleDayType} expandedMeals={expandedMeals} setExpandedMeals={setExpandedMeals} onRemove={removeItem} onEdit={openItemEditor} onQuick={(item) => addItem(item, '加餐')} quickItems={quickItems} combos={combos} onCombo={addCombo} onManageQuick={() => setIsQuickManaging(true)} foods={foods} input={recordInput} setInput={setRecordInput} draft={assistantDraft} onParse={createAssistantDraft} onConfirmDraft={confirmAssistantDraft} onDismissDraft={() => setAssistantDraft(null)} manualOpen={manualOpen} setManualOpen={setManualOpen} onAdd={addItem} />
+      : activePage === 'foods' ? <FoodsPage foods={foods} onAdd={(item) => addItem(item)} onSaveFood={addFood} combos={combos} onCombosChange={updateCombos} onCombo={addCombo} />
+        : activePage === 'history' ? <HistoryPage entries={entries} today={localDate()} />
+          : <Suspense fallback={<StatePanel icon={<RotateCcw />} title="正在加载分析" detail="图表模块按需加载，不会读取外部数据。" />}><InsightsPage entries={entries} today={localDate()} bodyMetrics={bodyMetrics} heightCm={heightCm} onSaveWeight={saveWeight} onSaveHeight={updateHeight} /></Suspense>
 
   return (
-    <AssistantInputContext.Provider value={{ input: recordInput, setInput: setRecordInput }}><div className="app-shell" data-theme={theme === 'system' ? undefined : theme}>
+    <div className="app-shell" data-theme={theme === 'system' ? undefined : theme}>
       <aside className="sidebar"><Brand /><Navigation active={activePage} onNavigate={setActivePage} /><button className="sidebar-setting" type="button" onClick={() => setIsSettingsOpen(true)}><Settings size={18} />设置</button></aside>
       <main className="main-content">
-        <header className="topbar"><Brand compact /><div className="header-actions">{!isOnline && <span className="network-status" role="status"><WifiOff size={14} />离线</span>}<button className="demo-chip" type="button" onClick={() => setDemoState(demoState === 'ready' ? 'loading' : 'ready')}>界面状态</button><button className="icon-button" type="button" aria-label="打开设置" onClick={() => setIsSettingsOpen(true)}><Settings size={19} /></button></div></header>
-        <section className="page" aria-labelledby="page-title"><div className="page-heading"><div><p className="eyebrow">{pageMeta[activePage].eyebrow}</p><h1 id="page-title">{pageMeta[activePage].title}</h1></div><StateSwitcher state={demoState} setState={setDemoState} /></div>{!isOnline && <p className="offline-notice" role="status"><WifiOff size={15} />当前离线：记录仍会保存到这台设备。</p>}{content}</section>
+        <header className="topbar"><Brand compact /><div className="header-actions">{!isOnline && <span className="network-status" role="status"><WifiOff size={14} />离线</span>}<button className="icon-button" type="button" aria-label="打开设置" onClick={() => setIsSettingsOpen(true)}><Settings size={19} /></button></div></header>
+        <section className="page" aria-labelledby="page-title"><div className="page-heading"><div><p className="eyebrow">{pageMeta[activePage].eyebrow}</p><h1 id="page-title">{pageMeta[activePage].title}</h1></div></div>{!isOnline && <p className="offline-notice" role="status"><WifiOff size={15} />当前离线：记录仍会保存到这台设备。</p>}{content}</section>
       </main>
       <nav className="bottom-nav" aria-label="主导航"><Navigation active={activePage} onNavigate={setActivePage} /></nav>
       {toast && <div className="toast" role="status"><span>{toast.text}</span>{toast.undo && <button type="button" onClick={() => { toast.undo?.(); setToast(null) }}><Undo2 size={15} />撤销</button>}<button aria-label="关闭提示" type="button" onClick={() => setToast(null)}><X size={16} /></button></div>}
       {isSettingsOpen && <SettingsModal theme={theme} setTheme={changeTheme} goals={nutritionGoals} onGoalChange={updateGoal} onExport={exportData} onImport={importData} onClose={() => setIsSettingsOpen(false)} />}
       {isQuickManaging && <QuickManager foods={foods} selected={quickFoodIds} onSave={(ids) => { updateQuickIds(ids); setIsQuickManaging(false); setToast({ text: `常用已更新为 ${ids.length} 项` }) }} onClose={() => setIsQuickManaging(false)} />}
       {editingItem && <ItemEditor item={editingItem.item} mealType={editingItem.mealType} onSave={saveItemEdit} onClose={() => setEditingItem(null)} />}
-    </div></AssistantInputContext.Provider>
+    </div>
   )
 }
 
@@ -277,12 +296,12 @@ function DevelopmentPreview() {
   </div>
 }
 
-function TodayPage({ entry, summary, goal, onDate, onDayType, expandedMeals, setExpandedMeals, onRemove, onEdit, onQuick, quickItems, combos, onCombo, onManageQuick, onRecord }: { entry: DailyEntry; summary: Nutrients; goal: Nutrients; onDate: (date: string) => void; onDayType: () => void; expandedMeals: string[]; setExpandedMeals: (value: string[]) => void; onRemove: (id: string) => void; onEdit: (id: string) => void; onQuick: (item: MealItem) => void; quickItems: MealItem[]; combos: MealCombo[]; onCombo: (combo: MealCombo) => void; onManageQuick: () => void; onRecord: () => void }) {
+function TodayPage({ entry, summary, goal, onDate, onDayType, expandedMeals, setExpandedMeals, onRemove, onEdit, onQuick, quickItems, combos, onCombo, onManageQuick, foods, input, setInput, draft, onParse, onConfirmDraft, onDismissDraft, manualOpen, setManualOpen, onAdd }: { entry: DailyEntry; summary: Nutrients; goal: Nutrients; onDate: (date: string) => void; onDayType: () => void; expandedMeals: string[]; setExpandedMeals: (value: string[]) => void; onRemove: (id: string) => void; onEdit: (id: string) => void; onQuick: (item: MealItem) => void; quickItems: MealItem[]; combos: MealCombo[]; onCombo: (combo: MealCombo) => void; onManageQuick: () => void; foods: MealItem[]; input: string; setInput: (value: string) => void; draft: AssistantDraft | null; onParse: () => void; onConfirmDraft: () => void; onDismissDraft: () => void; manualOpen: boolean; setManualOpen: (value: boolean) => void; onAdd: (item: MealItem, type?: MealType, note?: string) => void }) {
   const progress = Math.min(100, Math.round(summary.kcal / goal.kcal * 100))
   return <div className="today-layout"><div className="today-primary"><section className="date-row"><button className="icon-plain" aria-label="前一天" onClick={() => onDate(shiftDate(entry.date, -1))}><ChevronLeft size={20} /></button><button className="date-button" type="button"><CalendarDays size={17} />{formatDate(entry.date)}</button><button className="icon-plain" aria-label="后一天" onClick={() => onDate(shiftDate(entry.date, 1))}><ChevronRight size={20} /></button><button className={`day-type ${entry.dayType}`} type="button" onClick={onDayType}>{entry.dayType === 'training' ? '训练日' : '休息日'}</button></section>
     <section className="energy-card card"><div className="energy-ring" style={{ '--progress': `${progress * 3.6}deg` } as React.CSSProperties}><div><strong className="numeric">{formatNumber(summary.kcal)}</strong><span>/ {formatNumber(goal.kcal)} kcal</span></div></div><div className="energy-copy"><p className="section-label">ENERGY</p><h2>今日能量</h2><p>已完成 <span className="numeric">{progress}%</span> · 还可摄入 <strong className="numeric">{Math.max(0, goal.kcal - summary.kcal)} kcal</strong></p></div></section>
     <section className="macro-grid">{([{ key: 'protein', label: '蛋白质', unit: 'g', color: 'protein' }, { key: 'carbs', label: '碳水', unit: 'g', color: 'carbs' }, { key: 'fat', label: '脂肪', unit: 'g', color: 'fat' }] as const).map(({ key, label, unit, color }) => <article className={`macro-card ${color}`} key={key}><span>{label}</span><strong className="numeric">{summary[key]}<small> / {goal[key]} {unit}</small></strong><div className="meter"><i style={{ width: `${Math.min(100, summary[key] / goal[key] * 100)}%` }} /></div><em>剩余 {Math.max(0, goal[key] - summary[key])} {unit}</em></article>)}</section>
-    <RecordComposer onRecord={onRecord} />
+    <RecordFlow foods={foods} input={input} setInput={setInput} draft={draft} onParse={onParse} onConfirmDraft={onConfirmDraft} onDismissDraft={onDismissDraft} manualOpen={manualOpen} setManualOpen={setManualOpen} onAdd={onAdd} />
     <section className="section-block"><div className="section-header"><div><p className="section-label">MEALS</p><h2>餐食</h2></div><span className="muted">{entry.completeness}</span></div>{entry.meals.map((meal) => <MealCard key={meal.id} meal={meal} expanded={expandedMeals.includes(meal.id)} onToggle={() => setExpandedMeals(expandedMeals.includes(meal.id) ? expandedMeals.filter((id) => id !== meal.id) : [...expandedMeals, meal.id])} onRemove={onRemove} onEdit={onEdit} />)}</section>
   </div><aside className="today-side"><QuickPanel quickFoods={quickItems} combos={combos} onQuick={onQuick} onCombo={onCombo} onManage={onManageQuick} /></aside></div>
 }
@@ -318,16 +337,61 @@ function FoodsPage({ foods, onAdd, onSaveFood, combos, onCombosChange, onCombo }
       <div className="food-list">{comboList.map((combo) => <article className="food-row combo-row card" key={combo.id}><div className="food-glyph"><Library size={19} /></div><div><h3>{combo.name}</h3><p>{combo.mealType} · {combo.items.length} 项 · {combo.items.map((item) => item.name).join('、')}</p></div><div className="food-nutrition numeric">{calculateSummary([{ id: combo.id, type: combo.mealType, time: '', items: combo.items }]).kcal}<small>kcal</small></div><button className="icon-plain" aria-label={`记录套餐${combo.name}`} onClick={() => onCombo(combo)}><Plus size={19} /></button><button className="icon-plain" aria-label={`删除套餐${combo.name}`} onClick={() => onCombosChange(combos.filter((item) => item.id !== combo.id))}><Trash2 size={16} /></button></article>)}</div>
       {!comboList.length && <StatePanel icon={<Library />} title={combos.length ? '没有匹配的套餐' : '还没有常用套餐'} detail="新建套餐时可以选择多项食物和各自重量，保存后可一键记录。" />}
     </> : <>
-      <div className="food-list">{foodList.map((food) => <article className="food-row card" key={food.id}><div className="food-glyph">{food.brand ? <Package size={19} /> : <Utensils size={19} />}</div><div><h3>{food.name}</h3><p>{food.amount} · {food.state} · {food.brand ? `品牌：${food.brand}` : food.source}</p></div><div className="food-nutrition numeric">{food.kcal}<small> kcal</small><span>P {food.protein}g</span></div><button className="icon-plain" aria-label={`记录${food.name}`} onClick={() => onAdd(food)}><Plus size={19} /></button></article>)}</div>
+      <div className="food-list">{foodList.map((food) => <article className="food-row card is-clickable" key={food.id} role="button" tabIndex={0} aria-label={`编辑${food.name}`} onClick={() => { setEditing(food); setEditor('food') }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setEditing(food); setEditor('food') } }}><div className="food-glyph">{food.brand ? <Package size={19} /> : <Utensils size={19} />}</div><div><h3>{food.name}</h3><p>{food.amount} · {food.state} · {food.brand ? `品牌：${food.brand}` : food.source}</p></div><div className="food-nutrition numeric">{food.kcal}<small> kcal</small><span>P {food.protein}g</span></div><button className="icon-plain" aria-label={`记录${food.name}`} onClick={(event) => { event.stopPropagation(); onAdd(food) }}><Plus size={19} /></button></article>)}</div>
       {!foodList.length && <StatePanel icon={<Search />} title={category === 'brand' ? '还没有品牌食品' : '没有匹配的食物'} detail={category === 'brand' ? '在「新增食物」里勾选「品牌 / 包装食品」并填写品牌名，就会出现在这里。' : '换个关键词，或新增一种食物。'} />}
     </>
     }
   </div><aside className="library-detail card">{category === 'combos' ? <><p className="section-label">MEAL COMBO</p><h2>常用套餐</h2><p className="source-note">套餐是按食物库当前营养值算出的快照；记录后再改食物库，不会改动已经写进历史的记录。</p><button className="secondary-button" type="button" onClick={() => setEditor('combo')}><Plus size={16} />新建套餐</button></> : <><p className="section-label">LOCAL FOOD</p><h2>{current?.name ?? '未找到食物'}</h2>{current && <><div className="detail-nutrients"><b className="numeric">{current.kcal}<small> kcal</small></b><span>蛋白质 {current.protein}g</span><span>碳水 {current.carbs}g</span><span>脂肪 {current.fat}g</span></div><p className="source-note">数据来源：{current.brand ? `品牌：${current.brand} · ${current.source}` : current.source}。食物库和记录均仅保存在本机浏览器。</p><button className="secondary-button" type="button" onClick={() => { setEditing(current); setEditor('food') }}><Pencil size={16} />编辑食物</button></>}</>}</aside></div>
 }
 
-function RecordPage({ foods, input, setInput, draft, onParse, onConfirmDraft, onDismissDraft, manualOpen, setManualOpen, onAdd, quickItems, combos, onCombo, onManageQuick }: { foods: MealItem[]; input: string; setInput: (value: string) => void; draft: AssistantDraft | null; onParse: () => void; onConfirmDraft: () => void; onDismissDraft: () => void; manualOpen: boolean; setManualOpen: (value: boolean) => void; onAdd: (item: MealItem, type?: MealType, note?: string) => void; quickItems: MealItem[]; combos: MealCombo[]; onCombo: (combo: MealCombo) => void; onManageQuick: () => void }) {
+
+function RecordFlow({ foods, input, setInput, draft, onParse, onConfirmDraft, onDismissDraft, manualOpen, setManualOpen, onAdd }: { foods: MealItem[]; input: string; setInput: (value: string) => void; draft: AssistantDraft | null; onParse: () => void; onConfirmDraft: () => void; onDismissDraft: () => void; manualOpen: boolean; setManualOpen: (value: boolean) => void; onAdd: (item: MealItem, type?: MealType, note?: string) => void }) {
   const draftTotal = draft?.items.length ? calculateSummary([{ id: 'assistant-preview', type: draft.mealType, time: '现在', items: draft.items }]) : null
-  return <div className="record-layout"><section className="record-hero card"><div className="record-heading"><div><p className="section-label">本地饮食助手 · 规则解析</p><h2>用自然语言描述这一餐</h2><p>仅匹配本机已有食物与明确重量；不会调用 AI 或发送数据到外部服务。</p></div><Sparkles className="brand-icon" size={26} /></div><textarea value={input} onChange={(event) => { setInput(event.target.value); onDismissDraft() }} placeholder="例如：午餐 150g 鸡胸肉、150g 米饭" rows={4} /><div className="record-actions"><button className="secondary-button" onClick={() => setManualOpen(!manualOpen)}><Edit3 size={17} />手动记录</button><button className="secondary-button disabled" type="button"><ImagePlus size={17} />图片识别（尚未开放）</button><button className="primary-button" disabled={!input.trim()} onClick={onParse}>解析并确认</button></div></section>{draft?.intent === 'clarify' && <section className="estimate-card card"><div><p className="section-label">需要补充</p><h2>暂时不能安全记录</h2><p>{draft.clarification}</p></div><div className="estimate-actions"><button className="secondary-button" onClick={onDismissDraft}>返回修改</button><button className="primary-button" onClick={() => { onDismissDraft(); setManualOpen(true) }}>改用手动记录</button></div></section>}{draft?.intent === 'add' && draftTotal && <section className="estimate-card card"><div><p className="section-label">本地解析待确认</p><h2>{draft.mealType} · {draft.items.length} 项</h2><p>请核对食物、重量和营养值；确认后才会写入本机浏览器。</p></div>{draft.items.map((item) => <div className="estimate-item" key={item.id}><b>{item.name}</b><span>{item.amount} · {item.kcal} kcal · P {item.protein}g</span></div>)}<div className="estimate-item"><b>合计</b><span className="numeric">{draftTotal.kcal} kcal · P {draftTotal.protein}g · C {draftTotal.carbs}g · F {draftTotal.fat}g</span></div><div className="estimate-actions"><button className="secondary-button" onClick={onDismissDraft}>返回修改</button><button className="primary-button" onClick={onConfirmDraft}>确认并保存</button></div></section>}{manualOpen && <ManualForm foods={foods} onAdd={onAdd} /> }<section className="section-block"><QuickPanel quickFoods={quickItems} combos={combos} onQuick={(item) => onAdd(item, '加餐')} onCombo={onCombo} onManage={onManageQuick} /></section></div>
+  const shortcuts = ['记录午餐', '补记昨晚', '复制早餐']
+  return <div className="record-flow">
+    <section className="record-hero card">
+      <div className="record-heading"><div><p className="section-label">本地饮食助手 · 规则解析</p><h2>直接描述你吃了什么</h2><p>仅匹配本机已有食物与明确重量；不会调用 AI 或发送数据到外部服务。</p></div><Sparkles className="brand-icon" size={26} /></div>
+      <textarea value={input} onChange={(event) => { setInput(event.target.value); onDismissDraft() }} placeholder="例如：午餐 150g 鸡胸肉、150g 米饭" rows={3} />
+      <div className="assistant-shortcuts">{shortcuts.map((item) => <button type="button" key={item} onClick={() => setInput(item)}>{item}</button>)}</div>
+      <div className="record-actions">
+        <button className="secondary-button" type="button" onClick={() => setManualOpen(!manualOpen)}><Edit3 size={17} />手动记录</button>
+        <button className="secondary-button disabled" type="button"><ImagePlus size={17} />图片识别（尚未开放）</button>
+        <button className="primary-button" type="button" disabled={!input.trim()} onClick={onParse}>解析并确认</button>
+      </div>
+    </section>
+    {draft?.intent === 'clarify' && <section className="estimate-card card"><div><p className="section-label">需要补充</p><h2>暂时不能安全记录</h2><p>{draft.clarification}</p></div><div className="estimate-actions"><button className="secondary-button" onClick={onDismissDraft}>返回修改</button><button className="primary-button" onClick={() => { onDismissDraft(); setManualOpen(true) }}>改用手动记录</button></div></section>}
+    {draft?.intent === 'add' && draftTotal && <section className="estimate-card card"><div><p className="section-label">本地解析待确认</p><h2>{draft.mealType} · {draft.items.length} 项</h2><p>请核对食物、重量和营养值；确认后才会写入本机浏览器。</p></div>{draft.items.map((item) => <div className="estimate-item" key={item.id}><b>{item.name}</b><span>{item.amount} · {item.kcal} kcal · P {item.protein}g</span></div>)}<div className="estimate-item"><b>合计</b><span className="numeric">{draftTotal.kcal} kcal · P {draftTotal.protein}g · C {draftTotal.carbs}g · F {draftTotal.fat}g</span></div><div className="estimate-actions"><button className="secondary-button" onClick={onDismissDraft}>返回修改</button><button className="primary-button" onClick={onConfirmDraft}>确认并保存</button></div></section>}
+    {manualOpen && <ManualForm foods={foods} onAdd={onAdd} onClose={() => setManualOpen(false)} />}
+  </div>
+}
+
+function ManualForm({ foods, onAdd, onClose }: { foods: MealItem[]; onAdd: (item: MealItem, type?: MealType, note?: string) => void; onClose: () => void }) {
+  const [foodId, setFoodId] = useState(foods[0]?.id ?? '')
+  const [quantity, setQuantity] = useState('100')
+  const [unit, setUnit] = useState<FoodUnit>('g')
+  const [mealType, setMealType] = useState<MealType>(guessMealType())
+  const [error, setError] = useState('')
+  function add() {
+    const food = foods.find((item) => item.id === foodId)
+    if (!food) return setError('请先选择食物。')
+    try {
+      onAdd(calculateMealItem(food, { quantity: Number(quantity), unit }), mealType, `已记到「${mealType}」，保存在本机`)
+      setError('')
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '无法计算营养。') }
+  }
+  return <section className="manual-form card">
+    <div className="section-header"><div><p className="section-label">MANUAL LOG</p><h2>手动记录</h2></div><button className="icon-plain" type="button" aria-label="收起手动记录" onClick={onClose}><X size={17} /></button></div>
+    <div className="form-grid">
+      <label>食物<select value={foodId} onChange={(event) => setFoodId(event.target.value)}>{foods.map((food) => <option key={food.id} value={food.id}>{food.name}</option>)}</select></label>
+      <label>数量<input value={quantity} min="0" step="any" type="number" onChange={(event) => setQuantity(event.target.value)} /></label>
+      <label>单位<select value={unit} onChange={(event) => setUnit(event.target.value as FoodUnit)}><option value="g">g</option><option value="ml">ml</option><option value="份">份</option></select></label>
+    </div>
+    <div className="form-grid">
+      <label>记到哪一餐<select value={mealType} onChange={(event) => setMealType(event.target.value as MealType)}>{(['早餐', '午餐', '晚餐', '加餐'] as const).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+    </div>
+    {error && <p className="source-note form-error">{error}</p>}
+    <button className="primary-button" type="button" onClick={add}>计算并保存记录</button>
+  </section>
 }
 
 function HistoryPage({ entries, today }: { entries: DailyEntry[]; today: string }) {
@@ -345,7 +409,7 @@ function HistoryPage({ entries, today }: { entries: DailyEntry[]; today: string 
   const detailMeals = detail?.meals.filter((meal) => meal.items.length > 0) ?? []
   const detailTotal = detail ? calculateSummary(detail.meals) : null
   const detailCount = detailMeals.reduce((count, meal) => count + meal.items.length, 0)
-  return <div className="history-layout"><section className="calendar-card card"><div className="calendar-controls"><button className="icon-plain" aria-label="上个月" onClick={() => setCursor(new Date(year, month - 1, 1))}><ChevronLeft size={19} /></button><div><h2>{monthLabel}</h2><button className="text-button" onClick={() => { setCursor(new Date(`${today}T12:00:00`)); setDetailDate(today) }}>返回今天</button></div><button className="icon-plain" aria-label="下个月" onClick={() => setCursor(new Date(year, month + 1, 1))}><ChevronRight size={19} /></button></div><div className="weekday-row">{['日', '一', '二', '三', '四', '五', '六'].map((item) => <span key={item}>{item}</span>)}</div><div className="calendar-grid full-month">{cells.map((day, index) => { if (day < 1 || day > days) return <span key={`empty-${index}`} />; const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`; const entry = entryFor(date); return <button key={date} className={`${date === detailDate ? 'selected ' : ''}${entry?.completeness === '完整' ? 'complete' : entry?.completeness === '部分记录' ? 'partial' : ''}`} type="button" aria-label={`${date} ${entry?.completeness ?? '未记录'}`} onClick={() => setDetailDate(date)}><span>{day}</span><i /></button> })}</div><div className="calendar-legend"><span><i className="complete-dot" />已确认完整</span><span><i className="partial-dot" />部分记录</span><span><i className="empty-dot" />未记录</span></div></section><section className="history-list"><section className="history-detail card"><div className="history-detail-head"><div><p className="section-label">DAY DETAIL</p><h3>{formatDate(detailDate)}</h3></div><span className={`history-badge ${detail?.completeness === '完整' ? 'complete' : detail?.completeness === '部分记录' ? 'partial' : ''}`}>{detail?.completeness ?? '未记录'}</span></div>{detailMeals.length && detailTotal ? <><div className="history-detail-total"><strong className="numeric">{formatNumber(detailTotal.kcal)}<small> kcal</small></strong><em className="numeric">P {detailTotal.protein} · C {detailTotal.carbs} · F {detailTotal.fat} g</em></div><p className="source-note">{detail?.dayType === 'training' ? '训练日' : '休息日'} · {detailCount} 项 · 只在此处查看，不会改动今日记录</p><div className="history-detail-meals">{detailMeals.map((meal) => <div className="history-meal" key={meal.id}><div className="history-meal-head"><b>{meal.type}</b><span className="numeric">{meal.time} · {calculateSummary([meal]).kcal} kcal</span></div>{meal.items.map((item) => <div className="history-meal-item" key={item.id}><span>{item.name} · {item.amount} · {item.state}</span><b className="numeric">{item.kcal} kcal</b></div>)}</div>)}</div></> : <p className="detail-empty">这一天没有记录。未记录不代表未吃。</p>}{detailDate === today && <p className="source-note">这是今天，需要修改请到「今日」或「记录」页。</p>}</section><div className="section-header"><div><h2>每日汇总</h2><p className="muted">点击日期在上方查看当天餐食</p></div></div>{summaryRows.length ? summaryRows.map((entry) => { const total = calculateSummary(entry.meals); const hasMeals = entry.meals.length > 0; return <button className={`history-row card ${entry.date === detailDate ? 'selected' : ''}`} key={entry.date} type="button" onClick={() => setDetailDate(entry.date)}><div><b>{formatDate(entry.date)}</b><span>{entry.completeness}</span></div><strong className="numeric">{hasMeals ? total.kcal : '—'}<small> kcal</small></strong><em className="history-macros numeric">P {hasMeals ? total.protein : '—'} · C {hasMeals ? total.carbs : '—'} · F {hasMeals ? total.fat : '—'} g</em><ChevronRight size={18} /></button> }) : <StatePanel icon={<CalendarDays />} title="本月还没有本机记录" detail="未记录不代表未吃。" />}</section></div>
+  return <div className="history-layout"><section className="calendar-card card"><div className="calendar-controls"><button className="icon-plain" aria-label="上个月" onClick={() => setCursor(new Date(year, month - 1, 1))}><ChevronLeft size={19} /></button><div><h2>{monthLabel}</h2><button className="text-button" onClick={() => { setCursor(new Date(`${today}T12:00:00`)); setDetailDate(today) }}>返回今天</button></div><button className="icon-plain" aria-label="下个月" onClick={() => setCursor(new Date(year, month + 1, 1))}><ChevronRight size={19} /></button></div><div className="weekday-row">{['日', '一', '二', '三', '四', '五', '六'].map((item) => <span key={item}>{item}</span>)}</div><div className="calendar-grid full-month">{cells.map((day, index) => { if (day < 1 || day > days) return <span key={`empty-${index}`} />; const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`; const entry = entryFor(date); return <button key={date} className={`${date === detailDate ? 'selected ' : ''}${entry?.completeness === '完整' ? 'complete' : entry?.completeness === '部分记录' ? 'partial' : ''}`} type="button" aria-label={`${date} ${entry?.completeness ?? '未记录'}`} onClick={() => setDetailDate(date)}><span>{day}</span><i /></button> })}</div><div className="calendar-legend"><span><i className="complete-dot" />已确认完整</span><span><i className="partial-dot" />部分记录</span><span><i className="empty-dot" />未记录</span></div></section><section className="history-list"><section className="history-detail card"><div className="history-detail-head"><div><p className="section-label">DAY DETAIL</p><h3>{formatDate(detailDate)}</h3></div><span className={`history-badge ${detail?.completeness === '完整' ? 'complete' : detail?.completeness === '部分记录' ? 'partial' : ''}`}>{detail?.completeness ?? '未记录'}</span></div>{detailMeals.length && detailTotal ? <><div className="history-detail-total"><strong className="numeric">{formatNumber(detailTotal.kcal)}<small> kcal</small></strong><em className="numeric">P {detailTotal.protein} · C {detailTotal.carbs} · F {detailTotal.fat} g</em></div><p className="history-note">{detail?.dayType === 'training' ? '训练日' : '休息日'} · {detailCount} 项 · 只在此处查看，不会改动今日记录</p><div className="history-detail-meals">{detailMeals.map((meal) => <div className="history-meal" key={meal.id}><div className="history-meal-head"><b>{meal.type}</b><span className="numeric">{meal.time} · {calculateSummary([meal]).kcal} kcal</span></div>{meal.items.map((item) => <div className="history-meal-item" key={item.id}><span>{item.name} · {item.amount} · {item.state}</span><b className="numeric">{item.kcal} kcal</b></div>)}</div>)}</div></> : <p className="detail-empty">这一天没有记录。未记录不代表未吃。</p>}{detailDate === today && <p className="history-note">这是今天，需要修改请到「今日」页。</p>}</section><div className="section-header"><div><h2>每日汇总</h2><p className="muted">点击日期在上方查看当天餐食</p></div></div>{summaryRows.length ? summaryRows.map((entry) => { const total = calculateSummary(entry.meals); const hasMeals = entry.meals.length > 0; return <button className={`history-row card ${entry.date === detailDate ? 'selected' : ''}`} key={entry.date} type="button" onClick={() => setDetailDate(entry.date)}><div><b>{formatDate(entry.date)}</b><span>{entry.completeness}</span></div><strong className="numeric">{hasMeals ? total.kcal : '—'}<small> kcal</small></strong><em className="history-macros numeric">P {hasMeals ? total.protein : '—'} · C {hasMeals ? total.carbs : '—'} · F {hasMeals ? total.fat : '—'} g</em><ChevronRight size={18} /></button> }) : <StatePanel icon={<CalendarDays />} title="本月还没有本机记录" detail="未记录不代表未吃。" />}</section></div>
 }
 
 function QuickPanel({ quickFoods, combos, onQuick, onCombo, onManage }: { quickFoods: MealItem[]; combos: MealCombo[]; onQuick: (item: MealItem) => void; onCombo: (combo: MealCombo) => void; onManage: () => void }) {
@@ -363,12 +427,6 @@ function QuickPanel({ quickFoods, combos, onQuick, onCombo, onManage }: { quickF
 
 function MealCard({ meal, expanded, onToggle, onRemove, onEdit }: { meal: Meal; expanded: boolean; onToggle: () => void; onRemove: (id: string) => void; onEdit: (id: string) => void }) { const total = calculateSummary([meal]); return <article className="meal-card card"><button className="meal-title" type="button" onClick={onToggle}><div><span className="meal-dot" /><b>{meal.type}</b><small>{meal.time} · {meal.items.length} 项</small></div><div><strong className="numeric">{total.kcal}<small> kcal</small></strong><ChevronDown className={expanded ? 'rotated' : ''} size={18} /></div></button>{expanded && <div className="meal-items">{meal.items.map((item) => <div className="meal-item" key={item.id}><div><b>{item.name}</b><span>{item.amount} · {item.state} · {item.source}{item.estimateRange ? ` · 范围 ${item.estimateRange.minKcal}–${item.estimateRange.maxKcal} kcal` : ''}</span></div><div className="item-right"><strong className="numeric">{item.kcal}<small> kcal</small></strong><button aria-label={`修改${item.name}`} onClick={() => onEdit(item.id)}><Pencil size={15} /></button><button aria-label={`删除${item.name}`} onClick={() => onRemove(item.id)}><Trash2 size={15} /></button></div></div>)}</div>}</article> }
 
-function RecordComposer({ onRecord }: { onRecord: () => void }) {
-  const assistant = useContext(AssistantInputContext)
-  if (!assistant) return null
-  const shortcuts = ['记录午餐', '补记昨晚', '复制早餐']
-  return <section className="assistant-card card"><div className="assistant-title"><div><p className="section-label">饮食助手 <span>模拟</span></p><h2>直接描述你吃了什么</h2></div><Sparkles size={21} /></div><textarea value={assistant.input} onChange={(event) => assistant.setInput(event.target.value)} rows={3} placeholder="例如：午餐吃了鸡胸肉、米饭和一杯美式" /><div className="assistant-footer"><div className="assistant-shortcuts">{shortcuts.map((item) => <button type="button" key={item} onClick={() => assistant.setInput(item)}>{item}</button>)}</div><button className="send-button" type="button" disabled={!assistant.input.trim()} onClick={onRecord}><Sparkles size={16} />发送</button></div><p className="assistant-note">可使用系统键盘听写 · 图片识别尚未开放 · 不调用真实 AI</p></section>
-}
 function FoodEditor({ initial, onClose, onSave }: { initial?: MealItem | null; onClose: () => void; onSave: (item: MealItem) => void }) {
   const initialBasis = initial ? (initial.basisAmount ?? Number.parseFloat(initial.amount)) : 100
   const [name, setName] = useState(initial?.name ?? '')
@@ -402,7 +460,7 @@ function FoodEditor({ initial, onClose, onSave }: { initial?: MealItem | null; o
     })
     onClose()
   }
-  return <form className="food-editor card" onSubmit={(event) => { event.preventDefault(); submit() }}><div className="section-header"><div><p className="section-label">{initial ? 'EDIT FOOD' : 'NEW FOOD'}</p><h2>{initial ? '编辑食物' : '新增食物'}</h2></div><button className="icon-plain" type="button" onClick={onClose}><X size={18} /></button></div><label>食物名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：自制燕麦杯" /></label><div className="form-grid"><label>营养基准 g<input value={basisAmount} min="1" step="any" type="number" onChange={(event) => setBasisAmount(event.target.value)} /></label><label>状态<select value={state} onChange={(event) => setState(event.target.value as '熟重' | '生重')}><option value="熟重">熟重</option><option value="生重">生重</option></select></label><label>热量 kcal<input value={kcal} min="0" step="any" type="number" onChange={(event) => setKcal(event.target.value)} placeholder="每基准" /></label></div><div className="form-grid"><label>蛋白质 g<input value={protein} min="0" step="any" type="number" placeholder="如 31" onChange={(event) => setProtein(event.target.value)} /></label><label>碳水 g<input value={carbs} min="0" step="any" type="number" placeholder="如 0" onChange={(event) => setCarbs(event.target.value)} /></label><label>脂肪 g<input value={fat} min="0" step="any" type="number" placeholder="如 4" onChange={(event) => setFat(event.target.value)} /></label></div><label className="switch-row"><input checked={isBrand} type="checkbox" onChange={(event) => setIsBrand(event.target.checked)} /><span>品牌 / 包装食品</span></label>{isBrand && <label>品牌名<input value={brand} onChange={(event) => setBrand(event.target.value)} placeholder="例如：星巴克、Oatly" /></label>}<p className="source-note">营养值按上面的基准重量填写；保存后可在记录与套餐里按克换算。</p>{error && <p className="source-note form-error">{error}</p>}<button className="primary-button" type="submit">{initial ? '保存修改' : '保存到本机食物库'}</button></form>
+  return <form className="food-editor card" onSubmit={(event) => { event.preventDefault(); submit() }}><div className="section-header"><div><p className="section-label">{initial ? 'EDIT FOOD' : 'NEW FOOD'}</p><h2>{initial ? '编辑食物' : '新增食物'}</h2></div><button className="icon-plain" type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button></div><label>食物名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：自制燕麦杯" /></label><div className="form-grid"><label>营养基准 g<input value={basisAmount} min="1" step="any" type="number" onChange={(event) => setBasisAmount(event.target.value)} /></label><label>状态<select value={state} onChange={(event) => setState(event.target.value as '熟重' | '生重')}><option value="熟重">熟重</option><option value="生重">生重</option></select></label><label>热量 kcal<input value={kcal} min="0" step="any" type="number" onChange={(event) => setKcal(event.target.value)} placeholder="每基准" /></label></div><div className="form-grid"><label>蛋白质 g<input value={protein} min="0" step="any" type="number" placeholder="如 31" onChange={(event) => setProtein(event.target.value)} /></label><label>碳水 g<input value={carbs} min="0" step="any" type="number" placeholder="如 0" onChange={(event) => setCarbs(event.target.value)} /></label><label>脂肪 g<input value={fat} min="0" step="any" type="number" placeholder="如 4" onChange={(event) => setFat(event.target.value)} /></label></div><label className="switch-row"><input checked={isBrand} type="checkbox" onChange={(event) => setIsBrand(event.target.checked)} /><span>品牌 / 包装食品</span></label>{isBrand && <label>品牌名<input value={brand} onChange={(event) => setBrand(event.target.value)} placeholder="例如：星巴克、Oatly" /></label>}<p className="source-note">营养值按上面的基准重量填写；保存后可在记录与套餐里按克换算。</p>{error && <p className="source-note form-error">{error}</p>}<button className="primary-button" type="submit">{initial ? '保存修改' : '保存到本机食物库'}</button></form>
 }
 
 function RecipeEditor({ foods, onClose, onSave }: { foods: MealItem[]; onClose: () => void; onSave: (item: MealItem) => void }) {
@@ -423,7 +481,7 @@ function RecipeEditor({ foods, onClose, onSave }: { foods: MealItem[]; onClose: 
       onClose()
     } catch (reason) { setError(reason instanceof Error ? reason.message : '菜谱无法计算。') }
   }
-  return <section className="food-editor recipe-editor card"><div className="section-header"><div><p className="section-label">PRIVATE RECIPE</p><h2>创建私人菜谱</h2></div><button className="icon-plain" type="button" onClick={onClose}><X size={18} /></button></div><p className="source-note">按原料营养合计，按成品重量均匀分配；烹饪损失请通过实际成品重量体现。</p><label>菜谱名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：鸡胸肉饭" /></label><div className="form-grid"><label>原料一<select value={firstFood} onChange={(event) => setFirstFood(event.target.value)}>{foods.map((food) => <option key={food.id} value={food.id}>{food.name}</option>)}</select></label><label>重量 g<input value={firstGrams} min="0" step="any" type="number" onChange={(event) => setFirstGrams(event.target.value)} /></label><label>原料二<select value={secondFood} onChange={(event) => setSecondFood(event.target.value)}>{foods.map((food) => <option key={food.id} value={food.id}>{food.name}</option>)}</select></label></div><div className="form-grid"><label>重量 g<input value={secondGrams} min="0" step="any" type="number" onChange={(event) => setSecondGrams(event.target.value)} /></label><label>成品总重 g<input value={yieldGrams} min="0" step="any" type="number" onChange={(event) => setYieldGrams(event.target.value)} /></label><label>本次食用 g<input value={eatenGrams} min="0" step="any" type="number" onChange={(event) => setEatenGrams(event.target.value)} /></label></div>{error && <p className="source-note">{error}</p>}<button className="primary-button" type="button" onClick={save}>计算并保存菜谱</button></section>
+  return <section className="food-editor recipe-editor card"><div className="section-header"><div><p className="section-label">PRIVATE RECIPE</p><h2>创建私人菜谱</h2></div><button className="icon-plain" type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button></div><p className="source-note">按原料营养合计，按成品重量均匀分配；烹饪损失请通过实际成品重量体现。</p><label>菜谱名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：鸡胸肉饭" /></label><div className="form-grid"><label>原料一<select value={firstFood} onChange={(event) => setFirstFood(event.target.value)}>{foods.map((food) => <option key={food.id} value={food.id}>{food.name}</option>)}</select></label><label>重量 g<input value={firstGrams} min="0" step="any" type="number" onChange={(event) => setFirstGrams(event.target.value)} /></label><label>原料二<select value={secondFood} onChange={(event) => setSecondFood(event.target.value)}>{foods.map((food) => <option key={food.id} value={food.id}>{food.name}</option>)}</select></label></div><div className="form-grid"><label>重量 g<input value={secondGrams} min="0" step="any" type="number" onChange={(event) => setSecondGrams(event.target.value)} /></label><label>成品总重 g<input value={yieldGrams} min="0" step="any" type="number" onChange={(event) => setYieldGrams(event.target.value)} /></label><label>本次食用 g<input value={eatenGrams} min="0" step="any" type="number" onChange={(event) => setEatenGrams(event.target.value)} /></label></div>{error && <p className="source-note">{error}</p>}<button className="primary-button" type="button" onClick={save}>计算并保存菜谱</button></section>
 }
 function ComboEditor({ foods, onClose, onSave }: { foods: MealItem[]; onClose: () => void; onSave: (combo: MealCombo) => void }) {
   const [name, setName] = useState('')
@@ -449,7 +507,7 @@ function ComboEditor({ foods, onClose, onSave }: { foods: MealItem[]; onClose: (
     if (!rows.length) return setError('至少需要一种食物。')
     try { onSave({ id: `combo-${crypto.randomUUID()}`, name: name.trim(), mealType, items: buildItems() }) } catch (reason) { setError(reason instanceof Error ? reason.message : '套餐无法保存。') }
   }
-  return <section className="food-editor recipe-editor card"><div className="section-header"><div><p className="section-label">MEAL COMBO</p><h2>新建常用套餐</h2></div><button className="icon-plain" type="button" onClick={onClose}><X size={18} /></button></div><p className="source-note">按食物库当前营养值生成快照，记录后改动食物库不会影响已写入的记录。</p><label>套餐名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：工作日午餐" /></label><div className="form-grid"><label>记到哪一餐<select value={mealType} onChange={(event) => setMealType(event.target.value as MealType)}>{(['早餐', '午餐', '晚餐', '加餐'] as const).map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div>{rows.map((row, index) => <div className="form-grid" key={`${row.foodId}-${index}`}><label>食物<select value={row.foodId} onChange={(event) => setRows(rows.map((item, position) => position === index ? { ...item, foodId: event.target.value } : item))}>{foods.map((food) => <option key={food.id} value={food.id}>{food.name}</option>)}</select></label><label>重量 g<input value={row.grams} min="0" step="any" type="number" onChange={(event) => setRows(rows.map((item, position) => position === index ? { ...item, grams: event.target.value } : item))} /></label><label className="align-end"><button className="secondary-button" type="button" onClick={() => setRows(rows.filter((_, position) => position !== index))}>移除</button></label></div>)}<div className="record-actions"><button className="secondary-button" type="button" onClick={() => setRows([...rows, { foodId: foods[0]?.id ?? '', grams: '100' }])} disabled={!foods.length}><Plus size={16} />添加食物</button>{preview && <span className="combo-total numeric">合计 {preview.kcal} kcal · P {preview.protein} · C {preview.carbs} · F {preview.fat} g</span>}</div>{error && <p className="source-note form-error">{error}</p>}<button className="primary-button" type="button" onClick={save}>保存套餐</button></section>
+  return <section className="food-editor recipe-editor card"><div className="section-header"><div><p className="section-label">MEAL COMBO</p><h2>新建常用套餐</h2></div><button className="icon-plain" type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button></div><p className="source-note">按食物库当前营养值生成快照，记录后改动食物库不会影响已写入的记录。</p><label>套餐名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：工作日午餐" /></label><div className="form-grid"><label>记到哪一餐<select value={mealType} onChange={(event) => setMealType(event.target.value as MealType)}>{(['早餐', '午餐', '晚餐', '加餐'] as const).map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div>{rows.map((row, index) => <div className="form-grid" key={`${row.foodId}-${index}`}><label>食物<select value={row.foodId} onChange={(event) => setRows(rows.map((item, position) => position === index ? { ...item, foodId: event.target.value } : item))}>{foods.map((food) => <option key={food.id} value={food.id}>{food.name}</option>)}</select></label><label>重量 g<input value={row.grams} min="0" step="any" type="number" onChange={(event) => setRows(rows.map((item, position) => position === index ? { ...item, grams: event.target.value } : item))} /></label><label className="align-end"><button className="secondary-button" type="button" onClick={() => setRows(rows.filter((_, position) => position !== index))}>移除</button></label></div>)}<div className="record-actions"><button className="secondary-button" type="button" onClick={() => setRows([...rows, { foodId: foods[0]?.id ?? '', grams: '100' }])} disabled={!foods.length}><Plus size={16} />添加食物</button>{preview && <span className="combo-total numeric">合计 {preview.kcal} kcal · P {preview.protein} · C {preview.carbs} · F {preview.fat} g</span>}</div>{error && <p className="source-note form-error">{error}</p>}<button className="primary-button" type="button" onClick={save}>保存套餐</button></section>
 }
 
 function ItemEditor({ item, mealType, onSave, onClose }: { item: MealItem; mealType: MealType; onSave: (next: MealItem, mealType: MealType) => void; onClose: () => void }) {
@@ -494,9 +552,7 @@ function QuickManager({ foods, selected, onSave, onClose }: { foods: MealItem[];
   return <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}><section className="settings-panel manager-panel" role="dialog" aria-modal="true" aria-labelledby="quick-title" onMouseDown={(event) => event.stopPropagation()}><div className="panel-heading"><div><p className="eyebrow">QUICK ADD / LOCAL</p><h2 id="quick-title">管理常用食物</h2></div><button className="icon-button" type="button" aria-label="关闭" onClick={onClose}><X size={19} /></button></div><p className="source-note">勾选要出现在「常用」里的食物，最多 {limit} 项，顺序按勾选先后。只影响快捷入口，不会改动任何记录。</p><div className="manager-list">{foods.map((food) => { const checked = draft.includes(food.id); const full = !checked && draft.length >= limit; return <button className={`manager-row ${checked ? 'is-checked' : ''}`} key={food.id} type="button" disabled={full} aria-pressed={checked} onClick={() => toggle(food.id)}><span className="manager-check">{checked ? '✓' : ''}</span><span><b>{food.name}</b><small>{food.amount} · {food.kcal} kcal · {food.brand ? `品牌：${food.brand}` : food.source}</small></span></button> })}</div><div className="record-actions"><button className="secondary-button" type="button" onClick={() => setDraft([])}>全部取消</button><button className="primary-button" type="button" onClick={() => onSave(draft)}>保存常用（{draft.length}）</button></div></section></div>
 }
 
-function ManualForm({ foods, onAdd }: { foods: MealItem[]; onAdd: (item: MealItem, type?: MealType, note?: string) => void }) { const [foodId, setFoodId] = useState(foods[0]?.id ?? ''); const [quantity, setQuantity] = useState('100'); const [unit, setUnit] = useState<'g' | 'ml' | '份'>('g'); const [error, setError] = useState(''); const add = () => { const food = foods.find((item) => item.id === foodId); if (!food) return setError('请先选择食物。'); try { onAdd(calculateMealItem(food, { quantity: Number(quantity), unit }), '晚餐', '已按确认的营养基准保存'); setError('') } catch (reason) { setError(reason instanceof Error ? reason.message : '无法计算营养。') } }; return <section className="manual-form card"><p className="section-label">MANUAL LOG</p><h2>手动记录</h2><div className="form-grid"><label>食物<select value={foodId} onChange={(event) => setFoodId(event.target.value)}>{foods.map((food) => <option key={food.id} value={food.id}>{food.name}</option>)}</select></label><label>数量<input value={quantity} min="0" step="any" type="number" onChange={(event) => setQuantity(event.target.value)} /></label><label>单位<select value={unit} onChange={(event) => setUnit(event.target.value as 'g' | 'ml' | '份')}><option value="g">g</option><option value="ml">ml</option><option value="份">份</option></select></label></div>{error && <p className="source-note">{error}</p>}<button className="primary-button" type="button" onClick={add}>计算并保存记录</button></section> }
 function StatePanel({ icon, title, detail, action, actionLabel }: { icon: React.ReactNode; title: string; detail: string; action?: () => void; actionLabel?: string }) { return <div className="state-panel card"><span>{icon}</span><h2>{title}</h2><p>{detail}</p>{action && <button className="primary-button" onClick={action}>{actionLabel}</button>}</div> }
-function StateSwitcher({ state, setState }: { state: DemoState; setState: (state: DemoState) => void }) { return <div className="state-switcher"><button className={state === 'ready' ? 'selected' : ''} onClick={() => setState('ready')}>数据</button><button className={state === 'empty' ? 'selected' : ''} onClick={() => setState('empty')}>空</button><button className={state === 'error' ? 'selected' : ''} onClick={() => setState('error')}>错误</button></div> }
 function SettingsModal({ theme, setTheme, goals: localGoals, onGoalChange, onExport, onImport, onClose }: { theme: ThemeMode; setTheme: (theme: ThemeMode) => void; goals: LocalGoals; onGoalChange: (dayType: DayType, key: keyof Nutrients, value: number) => void; onExport: () => Promise<void>; onImport: (file: File) => Promise<void>; onClose: () => void }) { return <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}><section className="settings-panel settings-full" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}><div className="panel-heading"><div><p className="eyebrow">SETTINGS / LOCAL</p><h2 id="settings-title">设置</h2></div><button className="icon-button" type="button" aria-label="关闭设置" onClick={onClose}><X size={19} /></button></div><section className="setting-group"><h3>界面主题</h3><div className="theme-options">{(['system', 'light', 'dark'] as const).map((item) => <button key={item} className={theme === item ? 'is-selected' : ''} onClick={() => setTheme(item)}>{{ system: '跟随系统', light: '浅色', dark: '深色' }[item]}</button>)}</div></section><GoalEditor dayType="training" title="训练日目标" goals={localGoals.training} onChange={onGoalChange} /><GoalEditor dayType="rest" title="休息日目标" goals={localGoals.rest} onChange={onGoalChange} /><section className="setting-group"><h3>本地数据</h3><p className="muted">记录、目标和食物库只保存在这台设备的浏览器中。恢复备份会替换当前本机数据。</p><div className="record-actions"><button className="secondary-button" type="button" onClick={() => void onExport()}><Database size={17} />导出备份</button><label className="secondary-button"><Database size={17} />恢复备份<input hidden type="file" accept="application/json,.json" onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) void onImport(file); event.currentTarget.value = '' }} /></label></div></section><section className="setting-group link-group"><button><BookOpen size={18} />个人饮食习惯 <ChevronRight size={17} /></button><button><Cloud size={18} />云端同步 <em>尚未开放</em></button><button><Sparkles size={18} />AI 配置 <em>未接入真实服务</em></button></section></section></div> }
 
 function GoalEditor({ dayType, title, goals: localGoals, onChange }: { dayType: DayType; title: string; goals: Nutrients; onChange: (dayType: DayType, key: keyof Nutrients, value: number) => void }) { return <section className="setting-group"><h3>{title} <span>保存到本机</span></h3><div className="goal-grid">{(['kcal', 'protein', 'carbs', 'fat'] as const).map((item) => <label key={item}>{({ kcal: '热量', protein: '蛋白质', carbs: '碳水', fat: '脂肪' })[item]}<input value={localGoals[item]} min="0" step="any" type="number" onChange={(event) => onChange(dayType, item, Number(event.target.value))} /><small>{item === 'kcal' ? 'kcal' : 'g'}</small></label>)}</div></section> }

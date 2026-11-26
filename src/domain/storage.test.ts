@@ -110,3 +110,63 @@ describe('常用与套餐的备份兼容', () => {
     expect(parsed.combos).toEqual([])
   })
 })
+
+describe('身体数据的备份兼容', () => {
+  it('v3 备份没有身体字段时按空处理', () => {
+    const parsed = parseBackup(JSON.stringify({
+      schemaVersion: 3,
+      exportedAt: '2026-11-25T00:00:00.000Z',
+      dailyRecords: [],
+      foods: [],
+      quickFoodIds: [],
+      combos: [],
+    }))
+    expect(parsed.bodyMetrics).toEqual([])
+    expect(parsed.heightCm).toBeNull()
+  })
+
+  it('保留身高体重并丢弃不合理的值', () => {
+    const parsed = parseBackup(JSON.stringify({
+      schemaVersion: backupSchemaVersion,
+      exportedAt: '2026-11-26T00:00:00.000Z',
+      dailyRecords: [],
+      foods: [],
+      quickFoodIds: [],
+      combos: [],
+      heightCm: 178,
+      bodyMetrics: [{ date: '2026-11-24', weightKg: 72.4 }, { date: '2026-11-25', weightKg: 900 }],
+    }))
+    expect(parsed.heightCm).toBe(178)
+    expect(parsed.bodyMetrics).toEqual([{ date: '2026-11-24', weightKg: 72.4 }])
+  })
+})
+
+describe('身体数据的备份兼容', () => {
+  it('v3 备份没有身体字段时按空处理', () => {
+    const parsed = parseBackup(JSON.stringify({
+      schemaVersion: 3,
+      exportedAt: '2026-11-25T00:00:00.000Z',
+      dailyRecords: [],
+      foods: [],
+      quickFoodIds: [],
+      combos: [],
+    }))
+    expect(parsed.bodyMetrics).toEqual([])
+    expect(parsed.heightCm).toBeNull()
+  })
+
+  it('保留身高体重并丢弃不合理的值', () => {
+    const parsed = parseBackup(JSON.stringify({
+      schemaVersion: backupSchemaVersion,
+      exportedAt: '2026-11-26T00:00:00.000Z',
+      dailyRecords: [],
+      foods: [],
+      quickFoodIds: [],
+      combos: [],
+      heightCm: 178,
+      bodyMetrics: [{ date: '2026-11-24', weightKg: 72.4 }, { date: '2026-11-25', weightKg: 900 }],
+    }))
+    expect(parsed.heightCm).toBe(178)
+    expect(parsed.bodyMetrics).toEqual([{ date: '2026-11-24', weightKg: 72.4 }])
+  })
+})
