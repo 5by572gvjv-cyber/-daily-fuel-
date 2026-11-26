@@ -48,7 +48,8 @@
 - 站点地址：https://5by572gvjv-cyber.github.io/-daily-fuel-/ （仓库名以 `-` 开头结尾，页面路径也就是 `/-daily-fuel-/`）
 - 构建使用相对路径（`base: './'`），因此可以在子目录下正常加载资源。
 - 发布前失败过几次，原因是旧版部署动作在当前 Actions 产物后端上读不到 `github-pages` 产物；现在使用 `upload-pages-artifact@v5` + `deploy-pages@v5`，并在部署前用一步校验确认产物确实挂在本次运行上（失败时会直接指出问题在上传还是部署环节）。
-- 若再次失败：先看 Actions 里 `Verify pages artifact` 这一步的输出；`artifacts: github-pages` 表示产物正常，否则是构建或上传问题。
+- 另有一类偶发失败：校验步骤已打印 `artifacts: github-pages`，部署动作仍报 `Found 0 artifact(s)`，属 GitHub 产物索引的短暂延迟。工作流已内置「等 20 秒再部署、首次失败后等 45 秒重试一次」，不需要人工干预。
+- 若仍然失败：先看 Actions 里 `Verify pages artifact` 这一步的输出；`artifacts: github-pages` 表示产物正常，否则是构建或上传问题。连续两次重试都失败时，可把 `dist/` 目录直接拖到任意静态托管（同样是 HTTPS、无后端），应用不依赖任何服务端配置。
 
 ## 本地运行
 
