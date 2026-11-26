@@ -20,7 +20,7 @@ jobs:
   deploy:
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url || steps.deployment-retry.outputs.page_url }}
+      url: ${{ steps.deployment-1.outputs.page_url || steps.deployment-2.outputs.page_url || steps.deployment-3.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,28 +35,35 @@ jobs:
         with:
           name: github-pages
           path: dist
-      # 部署前确认产物确实挂在本次运行上，失败时可直接判断问题出在上传还是部署环节。
-      - name: Verify pages artifact
-        run: |
-          curl -sS \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
-            | node -e "let raw='';process.stdin.on('data',c=>raw+=c).on('end',()=>{const data=JSON.parse(raw);const names=(data.artifacts||[]).map(a=>a.name);console.log('artifacts:',names.join(',')||'(none)');if(!names.includes('github-pages')){console.error('github-pages artifact missing');process.exit(1)}})"
-      # Pages 的产物索引有短暂延迟：刚上传完立刻部署偶发「Found 0 artifact(s)」。留出稳定窗口再部署。
+      # Pages 的产物索引在上传完成后还会异步刷新一小会儿，立刻部署会偶发
+      # "No artifacts named github-pages were found"。
+      # 不在部署前做产物校验（校验自己也会撞上这个延迟），改为失败后按间隔重试。
       - name: Wait for artifact indexing
-        run: sleep 20
-      - id: deployment
+        run: sleep 25
+      - id: deployment-1
         continue-on-error: true
         uses: actions/deploy-pages@v5
         with:
           artifact_name: github-pages
-      # 首次部署被索引延迟拒绝时，再等一轮重试一次；两次都失败才算真失败。
-      - name: Wait before retry
-        if: steps.deployment.outcome == 'failure'
+      - name: Wait before retry 1
+        if: steps.deployment-1.outcome == 'failure'
         run: sleep 45
-      - id: deployment-retry
-        if: steps.deployment.outcome == 'failure'
+      - id: deployment-2
+        if: steps.deployment-1.outcome == 'failure'
+        continue-on-error: true
         uses: actions/deploy-pages@v5
         with:
           artifact_name: github-pages
+      - name: Wait before retry 2
+        if: steps.deployment-1.outcome == 'failure' && steps.deployment-2.outcome == 'failure'
+        run: sleep 60
+      - id: deployment-3
+        if: steps.deployment-1.outcome == 'failure' && steps.deployment-2.outcome == 'failure'
+        uses: actions/deploy-pages@v5
+        with:
+          artifact_name: github-pages
+      - name: Report deploy failure
+        if: steps.deployment-3.outcome == 'failure'
+        run: |
+          echo "三次尝试都未部署成功，请查看上面 deploy-pages 步骤的日志。"
+          exit 1
